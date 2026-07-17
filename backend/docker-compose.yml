@@ -1,0 +1,100 @@
+# rf-aggregator backend: adapter + aggregator (Telegraf) -> InfluxDB retain + MQTT gateway,
+# plus the outbound-only bridge agent. Broker is operator-provided (FEED_MQTT_URL) per the
+# plan; `--profile broker` bundles one for quickstart, `--profile dev` adds a synthetic
+# rtl_433 feed generator for testing without hardware.
+services:
+  telegraf:
+    image: telegraf:1.39
+    restart: unless-stopped
+    depends_on:
+      influxdb:
+        condition: service_healthy
+      bridge:
+        condition: service_started   # bridge seeds the dynamic mapping snippet on start
+    command:
+      - telegraf
+      - --config
+      - /etc/telegraf/telegraf.conf
+      - --config
+      - /etc/telegraf/adapter.conf
+      - --config-directory
+      - /etc/telegraf/dynamic/telegraf.d
+      - --watch-config
+      - poll                          # poll: reliable across shared-volume writes
+    environment:
+      FEED_MQTT_URL: ${FEED_MQTT_URL:-tcp://mosquitto:1883}
+      FEED_TOPIC: ${FEED_TOPIC:-rtl_433/events}
+      AGG_PERIOD: ${AGG_PERIOD:-5m}
+      INFLUX_URL: http://influxdb:8086
+      INFLUX_ORG: ${INFLUX_ORG:-rf}
+      INFLUX_BUCKET: ${INFLUX_BUCKET:-rf}
+      INFLUX_TOKEN: ${INFLUX_TOKEN}
+    volumes:
+      - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
+      - ../adapters/rtl433/adapter.conf:/etc/telegraf/adapter.conf:ro
+      - dynamic_conf:/etc/telegraf/dynamic
+
+  influxdb:
+    image: influxdb:2
+    restart: unless-stopped
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUX_ORG:-rf}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUX_BUCKET:-rf}
+      DOCKER_INFLUXDB_INIT_RETENTION: ${INFLUX_RETENTION:-30d}
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+    ports:
+      - "${INFLUX_PORT:-8086}:8086"
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  bridge:
+    build: ./bridge
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # lets EDGE_URL reach a wrangler dev on the host
+    environment:
+      FEED_MQTT_URL: ${FEED_MQTT_URL:-tcp://mosquitto:1883}
+      EDGE_URL: ${EDGE_URL:-}
+      BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      SYNC_PERIOD: ${SYNC_PERIOD:-60s}
+      AGG_PERIOD: ${AGG_PERIOD:-5m}
+      DYNAMIC_DIR: /dynamic
+    volumes:
+      - dynamic_conf:/dynamic
+
+  mosquitto:
+    profiles: ["broker", "dev"]
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./dev/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+
+  feedgen:
+    profiles: ["dev"]
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    depends_on:
+      - mosquitto
+    entrypoint: ["/bin/sh", "/feedgen.sh"]
+    environment:
+      BROKER_HOST: mosquitto
+      FEED_TOPIC: ${FEED_TOPIC:-rtl_433/events}
+      INTERVAL_S: ${FEEDGEN_INTERVAL_S:-5}
+    volumes:
+      - ./dev/feedgen.sh:/feedgen.sh:ro
+
+volumes:
+  dynamic_conf:
+  influxdb_data:
+  mosquitto_data:

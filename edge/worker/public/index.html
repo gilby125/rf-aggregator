@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>rf-aggregator</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>rf-aggregator</h1>
+    <span id="whoami" class="muted"></span>
+  </header>
+
+  <main>
+    <section id="shared">
+      <h2>Shared groups <span class="muted" id="shared-updated"></span></h2>
+      <div id="shared-groups" class="cards"></div>
+    </section>
+
+    <section id="custom">
+      <h2>My custom groups</h2>
+      <div id="custom-groups" class="cards"></div>
+      <details>
+        <summary>New custom group</summary>
+        <form id="custom-form">
+          <input id="custom-name" placeholder="group name" required>
+          <div id="sensor-picker" class="picker"></div>
+          <button type="submit">Save</button>
+        </form>
+      </details>
+    </section>
+
+    <section id="admin" hidden>
+      <h2>Admin: shared group definitions</h2>
+      <p class="muted">JSON: <code>{"group name": ["sensor-id", …]}</code>. Saving bumps
+        <code>defs_version</code>; the backend picks it up within a bridge sync.</p>
+      <textarea id="defs-json" rows="10" spellcheck="false"></textarea>
+      <button id="defs-save">Save group defs</button>
+      <span id="defs-status" class="muted"></span>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

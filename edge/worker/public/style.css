@@ -1,0 +1,17 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0 auto; max-width: 56rem; padding: 1rem; line-height: 1.4; }
+header { display: flex; justify-content: space-between; align-items: baseline; border-bottom: 1px solid color-mix(in srgb, currentColor 20%, transparent); margin-bottom: 1rem; }
+h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 1.5rem; } h3 { font-size: 0.95rem; margin: 0 0 .4rem; }
+.muted { opacity: .6; font-size: .85em; }
+.error { color: #c0392b; }
+.cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); gap: .8rem; }
+.card { border: 1px solid color-mix(in srgb, currentColor 20%, transparent); border-radius: .5rem; padding: .7rem .9rem; }
+.card table { width: 100%; border-collapse: collapse; }
+.card td { padding: .1rem 0; } .card td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+.picker { display: grid; gap: .2rem; margin: .6rem 0; max-height: 14rem; overflow-y: auto; }
+.picker label { display: block; }
+textarea { width: 100%; font-family: ui-monospace, monospace; }
+button { cursor: pointer; }
+button.del { border: none; background: none; opacity: .5; font-size: .8em; }
+input, textarea, button { font: inherit; }
+form input#custom-name { margin-top: .5rem; }
