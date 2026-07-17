@@ -77,6 +77,8 @@ type bridge struct {
 	defsVer  int
 	edgeURL  string
 	token    string
+	cfID     string // Cloudflare Access service token (edge auth in front of the Worker)
+	cfSecret string
 	periodS  int64
 	dynDir   string
 	http     *http.Client
@@ -104,9 +106,11 @@ func main() {
 		catalog: map[string]*sensorState{},
 		agg:     map[string]groupAgg{},
 		defsVer: -1, // force a defs pull on first successful ingest
-		edgeURL: env("EDGE_URL", ""),
-		token:   env("BRIDGE_TOKEN", ""),
-		periodS: int64(mustDuration("AGG_PERIOD", "5m").Seconds()),
+		edgeURL:  env("EDGE_URL", ""),
+		token:    env("BRIDGE_TOKEN", ""),
+		cfID:     env("CF_ACCESS_CLIENT_ID", ""),
+		cfSecret: env("CF_ACCESS_CLIENT_SECRET", ""),
+		periodS:  int64(mustDuration("AGG_PERIOD", "5m").Seconds()),
 		dynDir:  env("DYNAMIC_DIR", "/dynamic"),
 		http:    &http.Client{Timeout: 30 * time.Second},
 	}
@@ -229,6 +233,12 @@ func (b *bridge) call(method, path string, body []byte, out any) error {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+b.token)
+	// Cloudflare Access service token: authenticated at the edge before the Worker runs, so
+	// unauthenticated probes are rejected without consuming a Worker invocation.
+	if b.cfID != "" {
+		req.Header.Set("CF-Access-Client-Id", b.cfID)
+		req.Header.Set("CF-Access-Client-Secret", b.cfSecret)
+	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
