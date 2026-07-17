@@ -13,5 +13,10 @@ h1 { font-size: 1.3rem; } h2 { font-size: 1.05rem; margin-top: 1.5rem; } h3 { fo
 textarea { width: 100%; font-family: ui-monospace, monospace; }
 button { cursor: pointer; }
 button.del { border: none; background: none; opacity: .5; font-size: .8em; }
+button.edit { border: none; background: none; opacity: .6; font-size: .7em; text-decoration: underline; }
+ul.ungrouped { margin: .3rem 0; padding-left: 1.2rem; }
+ul.ungrouped li { padding: .1rem 0; }
+header a { color: inherit; }
+.warn { color: #c0392b; font-size: .7em; font-weight: normal; }
 input, textarea, button { font: inherit; }
 form input#custom-name { margin-top: .5rem; }

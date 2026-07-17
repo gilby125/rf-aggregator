@@ -14,21 +14,31 @@
 
   <main>
     <section id="shared">
-      <h2>Shared groups <span class="muted" id="shared-updated"></span></h2>
+      <h2>Groups <span class="muted" id="shared-updated"></span></h2>
       <div id="shared-groups" class="cards"></div>
     </section>
 
     <section id="custom">
       <h2>My custom groups</h2>
       <div id="custom-groups" class="cards"></div>
-      <details>
-        <summary>New custom group</summary>
+      <details id="custom-new">
+        <summary>New / edit custom group</summary>
         <form id="custom-form">
           <input id="custom-name" placeholder="group name" required>
           <div id="sensor-picker" class="picker"></div>
           <button type="submit">Save</button>
         </form>
       </details>
+    </section>
+
+    <section id="sensors">
+      <h2>Sensors <span class="muted">— every device's latest reading</span></h2>
+      <div id="sensor-list" class="cards"></div>
+    </section>
+
+    <section id="ungrouped">
+      <h2>Ungrouped sensors</h2>
+      <div id="ungrouped-list"></div>
     </section>
 
     <section id="admin" hidden>
