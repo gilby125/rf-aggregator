@@ -51,10 +51,10 @@ flowchart TB
     AG -->|"group mapping"| T
 
     subgraph CF["CLOUDFLARE EDGE — public, multi-tenant"]
-      ACC["Access OTP/IdP"] --- P["Pages UI"]
+      ACC["Access OTP/IdP"] --- P["UI (Worker static assets)"]
       P --- W["Worker API"]
       W --> D[("D1: users, config, catalog, defs")]
-      W -->|"write latest"| ST["aggregates.json (CDN static)"]
+      W -->|"write latest"| ST["aggregates.json (edge-cached)"]
       D --> MOD["Custom-group compute (per-user)"]
     end
     AG ==>|"push catalog + aggregates"| W
@@ -78,9 +78,11 @@ API (ingest / config / read), D1 (`users`, `user_config`, `catalog`+latest, `agg
 *(Open self-serve signup flow via Access to verify at build.)*
 
 **Two co-equal read paths — BOTH in v1:**
-- **Path A — SHARED:** admin groups aggregated once on the backend; Worker writes `aggregates.json` served
-  as a **Pages static / CDN** asset. Identical for all users, changes each `AGG_PERIOD` → cache hit skips
-  Worker/CPU/D1 (verified) → effectively unlimited free reads, scales to any # of users.
+- **Path A — SHARED:** admin groups aggregated once on the backend; bridge pushes them up; the Worker
+  serves `/aggregates.json` through the **edge Cache API** with `s-maxage = AGG_PERIOD`. Identical for
+  all users → a cache hit costs a Worker request but ~0 CPU and **no D1 read** (a runtime-updated file
+  cannot be a deploy-time static asset; true request-skipping CDN static needs an R2 public bucket on a
+  custom domain — documented as the scale-out option). 100k free req/day covers Path A at v1 scale.
 - **Path B — CUSTOM per-user:** a user defines their own sensor set; the **Worker computes that group's
   current average on demand from D1 latest values**. Personalized → uncacheable → per-request compute
   (the throughput/cost path). Opt-in per user. Current-value custom is v1; historical custom is future.
@@ -91,19 +93,20 @@ API (ingest / config / read), D1 (`users`, `user_config`, `catalog`+latest, `agg
 | Worker API (ingest / config / read, Access-gated) | Cloudflare | JS/TS (isolates, not Node) | moderate |
 | Pages UI (signup, config, view) | Cloudflare | JS/TS | moderate |
 | Custom-group compute (Path B) | Cloudflare Worker | JS/TS | v1; per-user on-demand from D1 |
-| Bridge agent (push up / pull down → mapping → reload) | backend | Python (`paho-mqtt`+`httpx`) or Go | small, headless |
+| Bridge agent (push up / pull down → mapping → reload) | backend | Go (**decided**; paho.mqtt.golang + net/http) | small, headless, single static binary |
 | rtl_433 adapter (feed → envelope) | backend | config/thin | v1 (Telegraf parse + normalize) |
 | Aggregator / store | backend | none (off-the-shelf Telegraf + InfluxDB) | config only |
 
 ## Open-source shape
 - The **feed→envelope adapter**, the **backend↔edge API contract**, and the **config schemas** are
   documented, versioned interfaces → backend, edge, adapters, and the custom module are independently
-  swappable/self-hostable. Repo: `/adapters`, `/backend`, `/edge`, `/docs` (contracts). License TBD.
+  swappable/self-hostable. Repo: `/adapters`, `/backend`, `/edge`, `/docs` (contracts). License: **MIT** (decided).
 - Nothing hardcoded: backend scalars in env (`AGG_PERIOD`, topics, broker, edge URL + service token);
   opt-in field-trim / dedup / downsample default OFF.
 
 ## Free-tier fit (Cloudflare limits verified this session)
-- **Path A reads ~free at any scale** (CDN-cached static; cache hits skip Worker/CPU/D1 — verified).
+- **Path A reads ~free at v1 scale** (edge-cached via Cache API: ~0 CPU, no D1 on hit; requests still
+  count toward 100k/day free — R2 public bucket is the true request-skipping option at scale).
 - **Path B reads are the throughput variable** — uncacheable per-user compute, billed as Worker requests +
   CPU (free: 100k req/day, 10ms CPU/req; D1 5M reads/day). Small user counts fine; high fan-out → per-user
   short-TTL cache or Durable Objects WebSocket push (free tier, SQLite backend).
@@ -122,8 +125,22 @@ API (ingest / config / read), D1 (`users`, `user_config`, `catalog`+latest, `agg
 - **Real (if small) multi-tenant app** — biggest scope is Worker+UI (both paths + config + auth). "30-day"
   risk lives there; keep v1 tight.
 - **Aggregation is numeric-sensor-specific** — non-sensor domains carried/served, not averaged.
-- **Cloudflare Access open self-serve signup flow** — verify at build.
-- **Aggregator mapping reload** — verify whether the lookup hot-reloads or needs a restart.
+- **Cloudflare Access open self-serve signup flow** — **RESOLVED (verified against CF docs 2026-07-17):**
+  supported on the free tier. Enable the One-time PIN IdP; give the Access app an Allow policy with
+  `Include: Everyone` (or `Login Methods: One-time PIN`) — any visitor self-serves an emailed OTP, no
+  admin pre-approval. Free tier = 50 seats, hard block at #51; a seat is burned per authenticated user
+  until removed → enable auto seat expiration. Worker reads identity from the `Cf-Access-Jwt-Assertion`
+  JWT (verify vs `<team>.cloudflareaccess.com/cdn-cgi/access/certs`, claims `email`/`sub`). Gotchas:
+  Access works on `*.workers.dev`/`*.pages.dev`; cross-origin API calls behind Access break on CORS
+  preflight → serve UI + API same-origin (one Worker with static assets).
+- **Aggregator mapping reload** — **RESOLVED (verified against Telegraf docs/source 2026-07-17):** no
+  hot path. `processors.lookup` (v1.26+) reads its mapping file only at startup; `--watch-config` and
+  SIGHUP watch only the config files themselves (not files they reference) and both do a full pipeline
+  restart. Mitigation: reload *flushes* partial aggregation windows (agent pushes aggregators on stop)
+  rather than dropping them. Design: bridge writes `mapping.json` **and** rewrites a version-stamped
+  snippet in the watched `telegraf.d/` dir → `--watch-config` fires → mapping re-read. Cost: one
+  truncated agg window per group-defs change (rare, admin-driven). Acceptable for v1; a
+  `processors.execd` sidecar is the zero-disruption upgrade path if needed.
 - **Path B fan-out** at scale — mitigate with caching / Durable Objects.
 - **Privacy**: serve anonymous aggregates, not per-source identifiable data tied to specific locations.
 

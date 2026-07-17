@@ -1,0 +1,12 @@
+# Production override (used as a second compose file, e.g. Komodo file_paths):
+# joins the operator's existing broker network so FEED_MQTT_URL can use its service DNS
+# name directly (default: the rtl_433-stack compose project's network).
+services:
+  telegraf:
+    networks: [default, feed]
+  bridge:
+    networks: [default, feed]
+networks:
+  feed:
+    name: ${FEED_NETWORK:-rtl_433-stack_default}
+    external: true

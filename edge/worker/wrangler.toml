@@ -1,0 +1,27 @@
+# rf-aggregator edge: one Worker serves the UI (static assets, same-origin — avoids the
+# Access CORS preflight gotcha) and the API. See docs/DEPLOY.md for full setup.
+name = "rf-aggregator-edge"
+main = "src/index.ts"
+compatibility_date = "2026-07-01"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "rf_aggregator"
+database_id = "REPLACE-run: wrangler d1 create rf_aggregator"
+
+[vars]
+# https://<your-team>.cloudflareaccess.com
+TEAM_DOMAIN = "https://REPLACE.cloudflareaccess.com"
+# The Access application AUD tag (Zero Trust > Access > Applications > your app)
+POLICY_AUD = "REPLACE"
+# Comma-separated emails bootstrapped as admins on first sign-in
+ADMIN_EMAILS = ""
+# "1" only in local dev (.dev.vars) — skips Access JWT verification
+DEV_MODE = "0"
+
+# Secrets (wrangler secret put BRIDGE_TOKEN; locally in .dev.vars):
+#   BRIDGE_TOKEN — shared bearer for /api/bridge/* (must match backend/.env)
