@@ -2,8 +2,9 @@
 const $ = (sel) => document.querySelector(sel);
 const TEAM_LOGOUT = "https://throughfire.cloudflareaccess.com/cdn-cgi/access/logout";
 
+const esc = (s) =>
+  String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const fmt = (n) => (typeof n === "number" ? (Math.round(n * 10) / 10).toString() : "—");
-// Absolute local wall-clock, e.g. "1:38pm"
 const clock = (ts) =>
   ts ? new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(/\s/g, "").toLowerCase() : "";
 const ago = (ts) => {
@@ -11,20 +12,43 @@ const ago = (ts) => {
   const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
   return s < 60 ? `${s}s ago` : `${Math.round(s / 60)} min ago`;
 };
-// Combined stamp, e.g. "1:38pm — 1 min ago"
-const stamp = (ts) => (ts ? `${clock(ts)} — ${ago(ts)}` : "never");
+const stamp = (ts) => (ts ? `${clock(ts)} · ${ago(ts)}` : "never");
 
-// Radio/protocol fields: meaningless to average, so hidden from GROUP cards (kept on
+// Pretty labels + units for known rtl_433 fields; unknown keys fall back to the raw name.
+const UNITS = {
+  temperature_F: "°F", temperature_C: "°C", humidity: "%",
+  wind_avg_mi_h: "mph", wind_max_mi_h: "mph", wind_gust_mi_h: "mph", wind_dir_deg: "°",
+  rain_in: "in", rain_mm: "mm", rain_rate_in_h: "in/h", pressure_hPa: "hPa",
+  freq: "MHz", rssi: "dB", snr: "dB", noise: "dB", battery_V: "V", light_lux: "lux", uv: "UV",
+};
+const LABELS = {
+  temperature_F: "Temperature", temperature_C: "Temperature", humidity: "Humidity",
+  wind_avg_mi_h: "Wind avg", wind_max_mi_h: "Wind max", wind_gust_mi_h: "Wind gust", wind_dir_deg: "Wind dir",
+  rain_in: "Rain", rain_mm: "Rain", rain_rate_in_h: "Rain rate", pressure_hPa: "Pressure",
+  message_type: "Msg type", sequence_num: "Seq", protocol: "Protocol", freq: "Freq",
+};
+const label = (k) => LABELS[k] || k.replace(/_/g, " ");
+
+// Radio/protocol fields: meaningless to average, hidden from GROUP cards (kept on
 // individual sensor cards, where per-device signal info is useful).
 const GROUP_HIDE = new Set([
   "freq", "rssi", "snr", "noise", "protocol", "message_type",
   "sequence_num", "sendmode", "button", "mic", "subtype", "status",
 ]);
-const physicalRows = (fields) =>
-  Object.entries(fields)
-    .filter(([k]) => !GROUP_HIDE.has(k.replace(/_mean$/, "")))
-    .map(([k, v]) => `<tr><td>${k.replace(/_mean$/, "")}</td><td>${fmt(v)}</td></tr>`)
+
+// A <dl class="metrics"> of physical readings. `hide` drops radio fields (group cards).
+function metricRows(fields, { hide = false } = {}) {
+  const rows = Object.entries(fields)
+    .filter(([k]) => k !== "battery_ok")
+    .filter(([k]) => !(hide && GROUP_HIDE.has(k.replace(/_mean$/, ""))))
+    .map(([k, v]) => {
+      const base = k.replace(/_mean$/, "");
+      const u = UNITS[base] ? ` <span class="unit">${UNITS[base]}</span>` : "";
+      return `<dt>${esc(label(base))}</dt><dd>${fmt(v)}${u}</dd>`;
+    })
     .join("");
+  return rows ? `<dl class="metrics">${rows}</dl>` : `<p class="empty">no data yet</p>`;
+}
 
 async function api(path, opts = {}) {
   const resp = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
@@ -32,23 +56,107 @@ async function api(path, opts = {}) {
   return resp.json();
 }
 
-function groupCard(name, fields, sub) {
-  const rows = physicalRows(fields);
-  return `<div class="card"><h3>${name}</h3><table>${rows || "<tr><td class='muted'>no data yet</td></tr>"}</table>${sub ? `<p class="muted">${sub}</p>` : ""}</div>`;
+// ── per-user config (theme + radar source), persisted via /api/config ──────────
+const Config = {
+  data: {},
+  async load() {
+    try { this.data = (await api("/api/config")).config || {}; } catch { this.data = {}; }
+    return this.data;
+  },
+  async patch(p) {
+    this.data = { ...this.data, ...p };
+    try { await api("/api/config", { method: "PUT", body: JSON.stringify(this.data) }); } catch { /* non-critical */ }
+  },
+};
+
+// ── theme ──────────────────────────────────────────────────────────────────────
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") root.setAttribute("data-theme", theme);
+  else root.removeAttribute("data-theme");
+  try { theme ? localStorage.setItem("rf-theme", theme) : localStorage.removeItem("rf-theme"); } catch {}
+}
+function effectiveTheme() {
+  const t = document.documentElement.getAttribute("data-theme");
+  if (t) return t;
+  return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+function initTheme() {
+  $("#theme-toggle").addEventListener("click", () => {
+    const next = effectiveTheme() === "dark" ? "light" : "dark";
+    applyTheme(next);
+    Config.patch({ theme: next });
+  });
 }
 
-// Shared groups = admin-defined named groups. "unassigned" is NOT a real group — it's the
-// catch-all bucket for sensors nobody has grouped yet, shown separately in #ungrouped.
-async function loadShared() {
-  const doc = await api("/aggregates.json");
-  $("#shared-updated").textContent = doc.updated ? `updated ${stamp(doc.updated)}` : "(no data yet)";
-  const named = Object.entries(doc.groups).filter(([g]) => g !== "unassigned");
+// ── KPI stat tiles ───────────────────────────────────────────────────────────
+function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold }) {
+  const now = Math.floor(Date.now() / 1000);
+  const lowBatt = sensors.filter((s) => "battery_ok" in s.latest && !s.latest.battery_ok).length;
+  const stale = sensors.filter((s) => (s.last_seen ?? 0) < now - staleThreshold).length;
+  const named = Object.keys(sharedDoc.groups || {}).filter((g) => g !== "unassigned").length;
+  const groups = named + customGroups.length;
+  const alerts = lowBatt + stale;
+  const tile = (label, value, sub, cls = "") =>
+    `<div class="kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ""}</div>`;
+  $("#kpis").innerHTML =
+    tile("Sensors", sensors.length, "reporting devices") +
+    tile("Groups", groups, `${named} shared · ${customGroups.length} custom`) +
+    tile("Alerts", alerts, alerts ? `${lowBatt} low battery · ${stale} stale` : "all healthy", alerts ? "alert" : "") +
+    tile("Last update", sharedDoc.updated ? clock(sharedDoc.updated) : "—", sharedDoc.updated ? ago(sharedDoc.updated) : "waiting for data");
+
+  const pill = $("#updated-pill");
+  if (sharedDoc.updated) {
+    pill.hidden = false;
+    $("#updated-text").textContent = `updated ${ago(sharedDoc.updated)}`;
+    pill.classList.toggle("stale", now - sharedDoc.updated > 2 * staleThreshold);
+  }
+}
+
+// ── shared (admin) groups ──────────────────────────────────────────────────────
+function renderShared(sharedDoc) {
+  $("#shared-updated").textContent = sharedDoc.updated ? `updated ${stamp(sharedDoc.updated)}` : "(no data yet)";
+  const named = Object.entries(sharedDoc.groups || {}).filter(([g]) => g !== "unassigned");
   $("#shared-groups").innerHTML =
-    named.map(([g, a]) => groupCard(g, a.fields, "")).join("") ||
-    `<p class="muted">No shared groups defined yet — create one in Admin below.</p>`;
+    named
+      .map(
+        ([g, a]) =>
+          `<div class="card"><div class="card-head"><h3>${esc(g)}</h3></div>${metricRows(a.fields, { hide: true })}</div>`
+      )
+      .join("") || `<p class="muted">No shared groups defined yet — create one in Admin below.</p>`;
 }
 
-// Prefill the new/edit form with an existing group's name + members, then open it.
+// ── custom groups ──────────────────────────────────────────────────────────────
+function renderCustom(customGroups) {
+  $("#custom-groups").innerHTML =
+    customGroups
+      .map((g) => {
+        const members = g.sensor_ids
+          .map((id) => (g.stale_ids.includes(id) ? `${esc(id)} <span class="badge warn">stale</span>` : esc(id)))
+          .join(", ");
+        return `<div class="card">
+          <div class="card-head">
+            <h3>${esc(g.name)}</h3>
+            <button class="btn-icon edit" title="Edit" data-name="${esc(g.name)}" data-ids="${esc(g.sensor_ids.join(","))}" aria-label="Edit group">✎</button>
+            <button class="btn-icon del" title="Delete" data-name="${esc(g.name)}" aria-label="Delete group">✕</button>
+          </div>
+          ${metricRows(g.computed, { hide: true })}
+          <p class="card-foot">${g.sensor_ids.length} sensors: ${members}</p>
+        </div>`;
+      })
+      .join("") || `<p class="muted">None yet — define one below (computed on demand).</p>`;
+
+  document.querySelectorAll("#custom-groups .del").forEach((b) =>
+    b.addEventListener("click", async () => {
+      await api(`/api/custom?name=${encodeURIComponent(b.dataset.name)}`, { method: "DELETE" });
+      refresh();
+    })
+  );
+  document.querySelectorAll("#custom-groups .edit").forEach((b) =>
+    b.addEventListener("click", () => startEdit(b.dataset.name, b.dataset.ids ? b.dataset.ids.split(",") : []))
+  );
+}
+
 function startEdit(name, ids) {
   $("#custom-name").value = name;
   const set = new Set(ids);
@@ -57,87 +165,48 @@ function startEdit(name, ids) {
   $("#custom-name").scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-async function loadCustom() {
-  const { groups } = await api("/api/custom");
-  $("#custom-groups").innerHTML =
-    groups
-      .map((g) => {
-        const rows = physicalRows(g.computed);
-        const members = g.sensor_ids
-          .map((id) => (g.stale_ids.includes(id) ? `${id} <span class="warn">stale</span>` : id))
-          .join(", ");
-        return `<div class="card">
-          <h3>${g.name}
-            <button class="edit" data-name="${g.name}" data-ids="${g.sensor_ids.join(",")}">edit</button>
-            <button class="del" data-name="${g.name}">✕</button>
-          </h3>
-          <table>${rows || "<tr><td class='muted'>no data yet</td></tr>"}</table>
-          <p class="muted">${g.sensor_ids.length} sensors: ${members}</p>
-        </div>`;
-      })
-      .join("") || `<p class="muted">None yet — define one below (Path B: computed on demand).</p>`;
-  document.querySelectorAll("#custom-groups .del").forEach((b) =>
-    b.addEventListener("click", async () => {
-      await api(`/api/custom?name=${encodeURIComponent(b.dataset.name)}`, { method: "DELETE" });
-      loadCustom();
-    })
-  );
-  document.querySelectorAll("#custom-groups .edit").forEach((b) =>
-    b.addEventListener("click", () => startEdit(b.dataset.name, b.dataset.ids ? b.dataset.ids.split(",") : []))
-  );
-}
-
-// Individual sensor cards show ALL fields (radio info included) — only battery_ok is pulled
-// out into the badge to avoid a redundant 0/1 row.
-async function loadSensors() {
-  const { sensors } = await api("/api/catalog");
+// ── individual sensors ─────────────────────────────────────────────────────────
+function renderSensors(sensors, staleThreshold) {
+  const now = Math.floor(Date.now() / 1000);
   $("#sensor-list").innerHTML =
     sensors
       .map((s) => {
-        const rows = Object.entries(s.latest)
-          .filter(([k]) => k !== "battery_ok")
-          .map(([k, v]) => `<tr><td>${k}</td><td>${fmt(v)}</td></tr>`)
-          .join("");
-        const batt =
-          "battery_ok" in s.latest && !s.latest.battery_ok ? ` <span class="warn">battery low</span>` : "";
-        return `<div class="card"><h3>${s.sensor_id}${batt}</h3><table>${rows || "<tr><td class='muted'>no readings</td></tr>"}</table><p class="muted">${stamp(s.last_seen)}</p></div>`;
+        const badges = [];
+        if ("battery_ok" in s.latest && !s.latest.battery_ok) badges.push('<span class="badge danger">battery low</span>');
+        if ((s.last_seen ?? 0) < now - staleThreshold) badges.push('<span class="badge warn">stale</span>');
+        return `<div class="card">
+          <div class="card-head"><h3>${esc(s.sensor_id)}</h3>${badges.join("")}</div>
+          ${metricRows(s.latest)}
+          <p class="card-foot">${stamp(s.last_seen)}</p>
+        </div>`;
       })
       .join("") || `<p class="muted">Catalog is empty — waiting for the bridge.</p>`;
 }
 
-// Ungrouped = sensors not in ANY group, shared (admin group_defs) OR custom (Path B).
-// This is what "unassigned" actually means: sensors you haven't placed anywhere yet.
-async function loadUngrouped(groupDefs) {
-  const el = $("#ungrouped-list");
-  const { sensors } = await api("/api/catalog");
+// ── ungrouped ──────────────────────────────────────────────────────────────────
+function renderUngrouped(sensors, groupDefs, customGroups) {
   const grouped = new Set();
   if (groupDefs) Object.values(groupDefs).flat().forEach((id) => grouped.add(id));
-  try {
-    const { groups } = await api("/api/custom");
-    groups.forEach((g) => g.sensor_ids.forEach((id) => grouped.add(id)));
-  } catch {
-    /* custom groups optional */
-  }
+  customGroups.forEach((g) => g.sensor_ids.forEach((id) => grouped.add(id)));
   const ungrouped = sensors.filter((s) => !grouped.has(s.sensor_id));
-  el.innerHTML = ungrouped.length
-    ? `<p class="muted">Not in any group yet (shared or custom) — add them in Admin below or a custom group.</p><ul class="ungrouped">` +
-      ungrouped.map((s) => `<li>${s.sensor_id} <span class="muted">· ${stamp(s.last_seen)}</span></li>`).join("") +
+  $("#ungrouped-list").innerHTML = ungrouped.length
+    ? `<p class="muted">Not in any group yet — add them in Admin below or a custom group.</p><ul class="ungrouped">` +
+      ungrouped.map((s) => `<li>${esc(s.sensor_id)} <span class="muted">· ${stamp(s.last_seen)}</span></li>`).join("") +
       `</ul>`
     : `<p class="muted">Every sensor is in a group.</p>`;
 }
 
-async function loadPicker() {
-  const { sensors } = await api("/api/catalog");
+function renderPicker(sensors) {
   $("#sensor-picker").innerHTML =
     sensors
       .map(
         (s) =>
-          `<label><input type="checkbox" value="${s.sensor_id}"> ${s.sensor_id} <span class="muted">${s.source} · ${ago(s.last_seen)}</span></label>`
+          `<label><input type="checkbox" value="${esc(s.sensor_id)}"> ${esc(s.sensor_id)} <span class="muted">${esc(s.source)} · ${ago(s.last_seen)}</span></label>`
       )
-      .join("") || `<p class="muted">Catalog is empty — waiting for the bridge to push sensors.</p>`;
+      .join("") || `<p class="muted">Catalog is empty — waiting for the bridge.</p>`;
 }
 
-async function loadAdmin(me, groupDefs) {
+async function initAdmin(me, groupDefs) {
   if (!me.is_admin) return;
   $("#admin").hidden = false;
   $("#defs-json").value = JSON.stringify(groupDefs ?? {}, null, 2);
@@ -152,32 +221,57 @@ async function loadAdmin(me, groupDefs) {
   });
 }
 
+// ── data flow ───────────────────────────────────────────────────────────────────
+let ME = null, GROUP_DEFS = null;
+const STALE = 600; // seconds; matches the backend's 2×period staleness idea loosely
+
+async function refresh() {
+  const [catalog, sharedDoc, customRes] = await Promise.all([
+    api("/api/catalog"),
+    api("/aggregates.json"),
+    api("/api/custom").catch(() => ({ groups: [] })),
+  ]);
+  const sensors = catalog.sensors;
+  const customGroups = customRes.groups || [];
+  renderKpis({ sensors, sharedDoc, customGroups, staleThreshold: STALE });
+  renderShared(sharedDoc);
+  renderCustom(customGroups);
+  renderSensors(sensors, STALE);
+  renderUngrouped(sensors, GROUP_DEFS, customGroups);
+  renderPicker(sensors);
+}
+
 $("#custom-form").addEventListener("submit", async (ev) => {
   ev.preventDefault();
   const sensor_ids = [...document.querySelectorAll("#sensor-picker input:checked")].map((i) => i.value);
-  await api("/api/custom", {
-    method: "POST",
-    body: JSON.stringify({ name: $("#custom-name").value, sensor_ids }),
-  });
+  await api("/api/custom", { method: "POST", body: JSON.stringify({ name: $("#custom-name").value, sensor_ids }) });
   $("#custom-name").value = "";
-  loadCustom();
+  refresh();
 });
 
 (async () => {
-  const me = await api("/api/me");
-  $("#whoami").innerHTML =
-    `${me.email}${me.is_admin ? " (admin)" : ""} · <a href="${TEAM_LOGOUT}">log out</a>`;
-  let groupDefs = null;
-  if (me.is_admin) groupDefs = (await api("/api/admin/group_defs")).group_defs;
-  await Promise.all([
-    loadShared(),
-    loadCustom(),
-    loadSensors(),
-    loadUngrouped(groupDefs),
-    loadPicker(),
-    loadAdmin(me, groupDefs),
-  ]);
-  setInterval(() => { loadShared(); loadSensors(); }, 60_000);
+  initTheme();
+  await Config.load();
+  // server-stored theme applies if the user hasn't set one on this device
+  let localTheme = null;
+  try { localTheme = localStorage.getItem("rf-theme"); } catch {}
+  if (!localTheme && (Config.data.theme === "light" || Config.data.theme === "dark")) applyTheme(Config.data.theme);
+
+  // radar: hand it the persisted source + a saver (radar.js is loaded before this)
+  if (window.initRadar) {
+    window.initRadar({
+      getSource: () => Config.data.radar && Config.data.radar.source,
+      saveSource: (name) => Config.patch({ radar: { source: name } }),
+    });
+  }
+
+  ME = await api("/api/me");
+  $("#whoami").innerHTML = `${esc(ME.email)}${ME.is_admin ? " (admin)" : ""} · <a href="${TEAM_LOGOUT}">log out</a>`;
+  if (ME.is_admin) GROUP_DEFS = (await api("/api/admin/group_defs")).group_defs;
+
+  await refresh();
+  await initAdmin(ME, GROUP_DEFS);
+  setInterval(refresh, 60_000);
 })().catch((e) => {
-  document.body.insertAdjacentHTML("beforeend", `<p class="error">${e.message}</p>`);
+  document.body.insertAdjacentHTML("beforeend", `<p class="error">${esc(e.message)}</p>`);
 });

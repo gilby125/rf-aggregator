@@ -4,6 +4,15 @@ name = "rf-aggregator-edge"
 main = "src/index.ts"
 compatibility_date = "2026-07-01"
 
+# Custom domain (CF auto-creates the DNS record + TLS cert on deploy). The Access
+# application must also list this hostname, or /api/* returns 401 (static assets +
+# radar still serve). doppelops.com is a Cloudflare zone.
+routes = [
+  { pattern = "weather.doppelops.com", custom_domain = true }
+]
+# keep the *.workers.dev URL working too (adding routes disables it otherwise)
+workers_dev = true
+
 [assets]
 directory = "./public"
 binding = "ASSETS"
