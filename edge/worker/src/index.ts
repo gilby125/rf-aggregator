@@ -46,7 +46,7 @@ async function identify(request: Request, env: Env): Promise<Identity | null> {
 }
 
 async function upsertUser(env: Env, who: Identity) {
-  const admins = env.ADMIN_EMAILS.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const admins = (env.ADMIN_EMAILS ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
   const isAdmin = admins.includes(who.email.toLowerCase()) ? 1 : 0;
   await env.DB.prepare(
     `INSERT INTO users (email, sub, is_admin, created_at) VALUES (?1, ?2, ?3, unixepoch())

@@ -18,10 +18,9 @@ database_id = "aacd1153-86cb-41c8-a4dc-a5dc6198beec"
 TEAM_DOMAIN = "https://throughfire.cloudflareaccess.com"
 # The Access application AUD tag (Zero Trust > Access > Applications > your app)
 POLICY_AUD = "bd45a4ad70c43548732eea166f05cbffe5aa172b7f05f8d7b3c7effb19861816"
-# Comma-separated emails bootstrapped as admins on first sign-in
-ADMIN_EMAILS = "gilby1@gmail.com"
 # "1" only in local dev (.dev.vars) — skips Access JWT verification
 DEV_MODE = "0"
 
-# Secrets (wrangler secret put BRIDGE_TOKEN; locally in .dev.vars):
-#   BRIDGE_TOKEN — shared bearer for /api/bridge/* (must match backend/.env)
+# Secrets (kept out of the repo — set with `wrangler secret put <NAME>`, or in .dev.vars locally):
+#   BRIDGE_TOKEN  — shared bearer for /api/bridge/* (must match backend/.env)
+#   ADMIN_EMAILS  — comma-separated emails bootstrapped as admins on first sign-in
