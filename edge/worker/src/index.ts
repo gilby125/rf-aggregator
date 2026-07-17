@@ -191,9 +191,16 @@ async function handleUserApi(
 
   if (path === "/api/catalog") {
     const rows = await env.DB.prepare(
-      `SELECT sensor_id, source, type, last_seen FROM catalog ORDER BY sensor_id`
-    ).all();
-    return json({ v: V, sensors: rows.results });
+      `SELECT sensor_id, source, type, last_seen, latest FROM catalog ORDER BY sensor_id`
+    ).all<{ sensor_id: string; source: string; type: string; last_seen: number; latest: string }>();
+    const sensors = rows.results.map((r) => ({
+      sensor_id: r.sensor_id,
+      source: r.source,
+      type: r.type,
+      last_seen: r.last_seen,
+      latest: JSON.parse(r.latest ?? "{}"),
+    }));
+    return json({ v: V, sensors });
   }
 
   if (path === "/api/config") {
