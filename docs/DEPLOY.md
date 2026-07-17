@@ -36,26 +36,35 @@ npx wrangler login
 npx wrangler d1 create rf_aggregator          # put the returned database_id into wrangler.toml
 npx wrangler d1 migrations apply rf_aggregator --remote
 npx wrangler secret put BRIDGE_TOKEN          # same value as backend/.env
+npx wrangler secret put ADMIN_EMAILS          # comma-separated admin emails (kept out of git)
 npx wrangler deploy                           # note the https://….workers.dev URL
 ```
 
-### Cloudflare Access (self-serve OTP signup — verified working on free tier)
+### Cloudflare Access
 
 1. Zero Trust dashboard → **Settings → Authentication → Login methods → Add: One-time PIN**.
 2. **Access → Applications → Add → Self-hosted**, application domain = your workers.dev
    hostname (Access works on `*.workers.dev`; no custom domain needed).
-3. Policy: **Action: Allow**, **Include: Everyone** (or `Login Methods: One-time PIN`).
-   Any visitor then self-serves: enter email → receive PIN → in. No admin pre-approval.
-4. Add **two more path-scoped apps on the same hostname with Action: Bypass**, or the
-   non-browser clients break:
-   - `<hostname>/api/bridge` → Bypass (the bridge can't do OTP; the Worker enforces
-     `BRIDGE_TOKEN` itself)
-   - `<hostname>/aggregates.json` → Bypass (Path A is anonymous, cacheable, shared)
-5. **Settings → seat expiration**: enable (e.g. 1 month). Free tier = **50 seats**; a seat is
-   consumed per authenticated user and user #51 is hard-blocked, so let drive-by seats expire.
-6. Copy the Access app's **AUD tag** and your team domain into `wrangler.toml`:
-   `TEAM_DOMAIN = "https://<team>.cloudflareaccess.com"`, `POLICY_AUD = "<aud>"`, plus
-   `ADMIN_EMAILS = "you@example.com"`. Redeploy: `npx wrangler deploy`.
+3. Main-app policy — choose your access model:
+   - **Open signup:** Action **Allow**, Include **Everyone** (or `Login Methods: One-time PIN`).
+     Any visitor self-serves via emailed PIN. Multi-tenant, but anyone can create an account.
+   - **Locked down (recommended for a personal instance):** Action **Allow**, Include
+     **Emails** = your address(es), or **Emails ending in** = your domain. Strangers/bots can't
+     authenticate at all.
+4. **Bridge endpoint** — `<hostname>/api/bridge/*` as a separate app. Two options:
+   - **Service token (recommended):** create an Access **service token**, give this app a
+     policy Action **Service Auth** including that token. Set `CF_ACCESS_CLIENT_ID` /
+     `CF_ACCESS_CLIENT_SECRET` in `backend/.env` so the bridge sends them. Unauthenticated
+     probes are rejected at the edge before the Worker runs; the Worker's `BRIDGE_TOKEN` is a
+     second layer.
+   - **Bypass:** simpler, but the endpoint is then reachable by anyone and gated only by
+     `BRIDGE_TOKEN`.
+5. **`/aggregates.json`** — leave it under the main app (authenticated) unless you *want* the
+   shared aggregates world-readable; only then give it a separate **Bypass** app.
+6. **Settings → seat expiration** (open-signup only): enable. Free tier = **50 seats**; a seat
+   is consumed per authenticated user and #51 is hard-blocked, so let drive-by seats expire.
+7. Put the Access app's **AUD tag** and team domain in `wrangler.toml`
+   (`TEAM_DOMAIN`, `POLICY_AUD`); `ADMIN_EMAILS` is a secret (step above). Redeploy.
 
 The Worker independently verifies the `Cf-Access-Jwt-Assertion` JWT against
 `<team>.cloudflareaccess.com/cdn-cgi/access/certs` (defense in depth — never trust the header
