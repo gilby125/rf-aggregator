@@ -64,6 +64,11 @@ services:
       FEED_MQTT_URL: ${FEED_MQTT_URL:-tcp://mosquitto:1883}
       EDGE_URL: ${EDGE_URL:-}
       BRIDGE_TOKEN: ${BRIDGE_TOKEN:-}
+      # Cloudflare Access service token for the /api/bridge/* app. Without these the
+      # bridge sends no CF-Access-Client-Id/Secret and Access returns 403 once the
+      # bridge endpoint is locked to a service-token policy.
+      CF_ACCESS_CLIENT_ID: ${CF_ACCESS_CLIENT_ID:-}
+      CF_ACCESS_CLIENT_SECRET: ${CF_ACCESS_CLIENT_SECRET:-}
       SYNC_PERIOD: ${SYNC_PERIOD:-60s}
       AGG_PERIOD: ${AGG_PERIOD:-5m}
       DYNAMIC_DIR: /dynamic
