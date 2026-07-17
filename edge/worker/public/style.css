@@ -238,6 +238,44 @@ ul.ungrouped li { padding: 6px 0; border-bottom: 1px solid var(--border); font-s
 .radar-scrubwrap { padding: 8px 16px 12px; }
 .radar-status { padding: 10px 16px; color: var(--muted); font-size: .82rem; }
 
+/* ---------- 24h trend charts ---------- */
+:root { --temp: #e8663c; --hum: #2f8fd6; }
+:root[data-theme="dark"] { --temp: #ff8a5c; --hum: #55b6f0; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --temp: #ff8a5c; --hum: #55b6f0; } }
+
+#trend-sensor { font-size: .82rem; padding: 4px 8px; }
+#trend-charts { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 780px) { #trend-charts { grid-template-columns: 1fr 1fr; } }
+.chart {
+  position: relative; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 14px 6px; box-shadow: var(--shadow);
+}
+.chart-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 4px; }
+.chart-title { font-weight: 650; font-size: .9rem; }
+.chart-now { font-variant-numeric: tabular-nums; font-size: .9rem; }
+.chart-now b { font-size: 1.05rem; }
+.chart-svg { width: 100%; height: auto; display: block; overflow: visible; touch-action: none; }
+.chart-empty { color: var(--muted); font-size: .85rem; padding: 26px 0; text-align: center; }
+
+.chart .grid { stroke: var(--border); stroke-width: 1; opacity: .7; }
+.chart .axis-y { fill: var(--muted); font-size: 10px; text-anchor: end; }
+.chart .axis-x { fill: var(--muted); font-size: 10px; text-anchor: middle; }
+.chart.temp .line { stroke: var(--temp); } .chart.hum .line { stroke: var(--hum); }
+.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart.temp .grad-top { stop-color: var(--temp); stop-opacity: .28; }
+.chart.hum  .grad-top { stop-color: var(--hum);  stop-opacity: .28; }
+.grad-bot { stop-color: var(--temp); stop-opacity: 0; }
+.chart.hum .grad-bot { stop-color: var(--hum); stop-opacity: 0; }
+.chart.temp .last, .chart.temp .cdot { fill: var(--temp); }
+.chart.hum .last,  .chart.hum .cdot  { fill: var(--hum); }
+.chart .cx { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .cdot { stroke: var(--surface); stroke-width: 1.5; }
+.chart-tip {
+  position: absolute; top: 34px; z-index: 5; pointer-events: none;
+  background: var(--text); color: var(--surface); font-size: .74rem; font-weight: 600;
+  padding: 3px 7px; border-radius: 6px; white-space: nowrap;
+}
+
 /* ---------- 7-day forecast ---------- */
 .fc-days { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8px; }
 .fc-day {
