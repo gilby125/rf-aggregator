@@ -37,12 +37,14 @@ pushes the sensor catalog + latest values + shared aggregates **up**, pulls grou
 reload).
 
 **Edge** (Cloudflare): one **Worker** serves both the API and the UI (static assets, same-origin
-to avoid Access CORS issues), gated by **Cloudflare Access** with self-serve one-time-PIN signup.
-**D1** holds users, per-user config, the sensor catalog, and group definitions.
+to avoid Access CORS issues), gated by **Cloudflare Access** with one-time-PIN sign-in. The Allow
+policy can be open (self-serve signup, multi-tenant) or restricted to specific emails/domains —
+your choice (see [Security](#security)). **D1** holds users, per-user config, the sensor catalog,
+and group definitions.
 
 **Two read paths:**
 - **Path A — shared:** admin-defined groups are aggregated once on the backend and served from an
-  edge-cached `/aggregates.json`. Identical for everyone → reads are ~free at realistic scale.
+  edge-cached `/aggregates.json`. Identical for everyone → cheap reads at realistic scale.
 - **Path B — custom:** each user defines their own sensor groups; the Worker computes their
   current averages on demand from the latest values in D1.
 
@@ -98,20 +100,23 @@ npx wrangler login
 npx wrangler d1 create rf_aggregator            # put the id in wrangler.toml
 npx wrangler d1 migrations apply rf_aggregator --remote
 npx wrangler secret put BRIDGE_TOKEN            # must match backend/.env BRIDGE_TOKEN
+npx wrangler secret put ADMIN_EMAILS            # comma-separated admin emails (secret, not in git)
 npx wrangler deploy
 ```
 
-Then set up **Cloudflare Access** (OTP self-serve signup, plus Bypass rules for `/api/bridge/*`
-and `/aggregates.json`) and fill `TEAM_DOMAIN` / `POLICY_AUD` / `ADMIN_EMAILS` in `wrangler.toml`.
-Finally set `EDGE_URL` + `BRIDGE_TOKEN` in `backend/.env` so the bridge syncs up. Full
-step-by-step (including the exact Access policy) is in [docs/DEPLOY.md](docs/DEPLOY.md).
+Then set up **Cloudflare Access** (OTP sign-in; a service token for `/api/bridge/*`) and fill
+`TEAM_DOMAIN` / `POLICY_AUD` in `wrangler.toml`. Finally set `EDGE_URL` + `BRIDGE_TOKEN`
+(+ the service-token `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET`) in `backend/.env` so the
+bridge syncs up. Full step-by-step including the exact Access policies is in
+[docs/DEPLOY.md](docs/DEPLOY.md); the trade-offs are under [Security](#security).
 
 Local edge dev: `cp .dev.vars.example .dev.vars` (sets `DEV_MODE=1` to stub Access),
 `npm run db:migrate:local`, `npx wrangler dev --ip 0.0.0.0`.
 
 ## Usage (web UI)
 
-Open the Worker URL; Cloudflare Access emails you a one-time PIN to sign in (no admin approval).
+Open the Worker URL; Cloudflare Access emails you a one-time PIN to sign in (whether anyone can
+sign in or only allow-listed emails depends on your Access policy — see [Security](#security)).
 The page auto-refreshes every 60s. Sections, top to bottom:
 
 - **Groups** — the shared, admin-defined groups (Path A), each showing its per-group averages.
@@ -133,6 +138,28 @@ value.
 
 Nothing is hardcoded — backend scalars live in `backend/.env` (`AGG_PERIOD`, `SYNC_PERIOD`,
 topics, broker, `EDGE_URL`, `BRIDGE_TOKEN`), edge config in `wrangler.toml`.
+
+## Security
+
+The trust boundary is: **the backend never accepts inbound connections.** The Go bridge is the
+only link to the cloud and it dials *out* only — so nothing self-hosted is reachable from the
+internet through this system.
+
+- **Transport:** the bridge talks to the Worker over HTTPS; the UI/API sit behind Cloudflare
+  Access.
+- **User access (main app):** Cloudflare Access OTP. The Allow policy is your dial — **Everyone**
+  for open self-serve multi-tenant signup, or **specific emails / an email domain** to lock it to
+  yourself or your household. The Worker independently verifies the `Cf-Access-Jwt-Assertion` JWT
+  against your team's public keys (never trusts the header alone) and provisions a user row on
+  first sign-in. Admins are set via the `ADMIN_EMAILS` secret.
+- **Bridge endpoint (`/api/bridge/*`):** protect with a Cloudflare Access **service token**
+  (`CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET`) so unauthenticated probes are rejected at
+  the edge before the Worker runs; the Worker's `BRIDGE_TOKEN` bearer is a second layer.
+- **`/aggregates.json`:** keep it behind Access (default) so shared aggregates aren't public;
+  only expose it via a Bypass app if you deliberately want anonymous reads.
+- **Secrets** live in `wrangler secret` (`BRIDGE_TOKEN`, `ADMIN_EMAILS`) and `backend/.env`
+  (gitignored) — never in the repo. `wrangler.toml` holds only non-secret identifiers
+  (`TEAM_DOMAIN`, `POLICY_AUD`, D1 id).
 
 ## Status
 
