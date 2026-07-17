@@ -1,3 +1,4 @@
 # Copy to .dev.vars for `wrangler dev` (never commit .dev.vars).
 DEV_MODE=1
 BRIDGE_TOKEN=dev-bridge-token
+ADMIN_EMAILS=you@example.com
