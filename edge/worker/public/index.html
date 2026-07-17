@@ -78,6 +78,16 @@
       <p id="fc-status" class="muted"></p>
     </section>
 
+    <!-- 24h temp/humidity trends (our collected sensor data) -->
+    <section id="trends-section" aria-label="24-hour trends">
+      <div class="section-head">
+        <h2>24-hour trends</h2>
+        <span class="count"><select id="trend-sensor" aria-label="Sensor for trend charts"></select></span>
+      </div>
+      <div id="trend-charts"></div>
+      <p id="trend-status" class="muted"></p>
+    </section>
+
     <!-- shared (admin) groups -->
     <section id="shared">
       <div class="section-head"><h2>Groups</h2><span class="count" id="shared-updated"></span></div>
@@ -126,6 +136,7 @@
   <script src="/vendor/leaflet.js"></script>
   <script src="/radar.js"></script>
   <script src="/forecast.js"></script>
+  <script src="/chart.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

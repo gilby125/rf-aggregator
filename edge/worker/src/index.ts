@@ -90,6 +90,27 @@ async function bridgeIngest(request: Request, env: Env, ctx: ExecutionContext): 
   );
   if (stmts.length) await env.DB.batch(stmts);
 
+  // Time-series history for the 24h charts. The bridge re-sends the same snapshot
+  // every sync; UNIQUE(sensor_id, ts) + INSERT OR IGNORE dedupes to one row per
+  // actual sensor reading (keyed on last_seen). Prune beyond 48h to stay bounded.
+  const nowS = Math.floor(Date.now() / 1000);
+  const reads = [];
+  for (const c of body.catalog ?? []) {
+    const f = c.latest ?? {};
+    const temp = typeof f.temperature_F === "number" ? f.temperature_F : null;
+    const hum = typeof f.humidity === "number" ? f.humidity : null;
+    if (temp === null && hum === null) continue;
+    reads.push(
+      env.DB.prepare(
+        `INSERT OR IGNORE INTO readings (sensor_id, ts, temperature_F, humidity) VALUES (?1, ?2, ?3, ?4)`
+      ).bind(c.id, c.last_seen || nowS, temp, hum)
+    );
+  }
+  if (reads.length) {
+    reads.push(env.DB.prepare(`DELETE FROM readings WHERE ts < ?1`).bind(nowS - 48 * 3600));
+    await env.DB.batch(reads);
+  }
+
   if (body.aggregates) {
     const doc = {
       v: V,
@@ -201,6 +222,21 @@ async function handleUserApi(
       latest: JSON.parse(r.latest ?? "{}"),
     }));
     return json({ v: V, sensors });
+  }
+
+  if (path === "/api/history") {
+    const hours = Math.min(168, Math.max(1, parseInt(new URL(request.url).searchParams.get("hours") || "24", 10) || 24));
+    const since = Math.floor(Date.now() / 1000) - hours * 3600;
+    const rows = await env.DB.prepare(
+      `SELECT sensor_id, ts, temperature_F, humidity FROM readings WHERE ts >= ?1 ORDER BY ts`
+    ).bind(since).all<{ sensor_id: string; ts: number; temperature_F: number | null; humidity: number | null }>();
+    const series: Record<string, { temperature_F: [number, number][]; humidity: [number, number][] }> = {};
+    for (const r of rows.results) {
+      const s = (series[r.sensor_id] ??= { temperature_F: [], humidity: [] });
+      if (r.temperature_F !== null) s.temperature_F.push([r.ts, r.temperature_F]);
+      if (r.humidity !== null) s.humidity.push([r.ts, r.humidity]);
+    }
+    return json({ v: V, hours, series });
   }
 
   if (path === "/api/config") {
