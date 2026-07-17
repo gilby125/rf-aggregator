@@ -67,6 +67,17 @@
       </div>
     </section>
 
+    <!-- 7-day NWS forecast -->
+    <section id="forecast-section" aria-label="7-day forecast">
+      <div class="section-head">
+        <h2>7-day forecast</h2>
+        <span class="count" id="fc-place">National Weather Service</span>
+      </div>
+      <div id="fc-days" class="fc-days"></div>
+      <div id="fc-detail" class="fc-detail" hidden></div>
+      <p id="fc-status" class="muted"></p>
+    </section>
+
     <!-- shared (admin) groups -->
     <section id="shared">
       <div class="section-head"><h2>Groups</h2><span class="count" id="shared-updated"></span></div>
@@ -114,6 +125,7 @@
 
   <script src="/vendor/leaflet.js"></script>
   <script src="/radar.js"></script>
+  <script src="/forecast.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>
