@@ -1,5 +1,15 @@
 node_modules/
 .wrangler/
 .dev.vars
-.env
 *.log
+
+# Secrets. Note ".env" alone does NOT match "komodo.env" or "backend/.env.local" —
+# these patterns are deliberately broader.
+.env
+*.env
+.env.*
+!.env.example
+komodo.env
+secrets.yaml
+*.key
+*.pem
