@@ -108,10 +108,13 @@
       </details>
     </section>
 
-    <!-- every sensor -->
+    <!-- every sensor: collapsed by default, it's a long raw list once a few devices report -->
     <section id="sensors">
-      <div class="section-head"><h2>Sensors</h2><span class="count">every device's latest reading</span></div>
-      <div id="sensor-list" class="cards"></div>
+      <div class="section-head"><h2>Sensors</h2><span class="count" id="sensor-count"></span></div>
+      <details id="sensor-disclosure" class="disclosure">
+        <summary>Show every device's latest reading</summary>
+        <div id="sensor-list" class="cards"></div>
+      </details>
     </section>
 
     <!-- ungrouped -->
