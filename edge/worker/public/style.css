@@ -212,6 +212,7 @@ select { width: auto; cursor: pointer; }
 
 details.disclosure { margin-top: 12px; border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 4px 14px; background: var(--surface); }
 details.disclosure > summary { cursor: pointer; padding: 8px 0; font-weight: 600; font-size: .88rem; color: var(--accent); }
+details.disclosure[open] > .cards { padding-bottom: 12px; }
 .form-row { display: flex; gap: 10px; align-items: center; margin: 10px 0; flex-wrap: wrap; }
 .picker { display: grid; grid-template-columns: repeat(auto-fill, minmax(12rem, 1fr)); gap: 4px 12px; margin: 10px 0; max-height: 15rem; overflow-y: auto; padding: 8px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface-2); }
 .picker label { display: flex; align-items: center; gap: 7px; font-size: .86rem; padding: 2px 0; }
@@ -239,9 +240,11 @@ ul.ungrouped li { padding: 6px 0; border-bottom: 1px solid var(--border); font-s
 .radar-status { padding: 10px 16px; color: var(--muted); font-size: .82rem; }
 
 /* ---------- 24h trend charts ---------- */
-:root { --temp: #e8663c; --hum: #2f8fd6; }
-:root[data-theme="dark"] { --temp: #ff8a5c; --hum: #55b6f0; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --temp: #ff8a5c; --hum: #55b6f0; } }
+:root { --temp: #e8663c; --tempc: #e8663c; --hum: #2f8fd6; --pm25: #8b5cf6; --pm10: #0f9b8e; }
+:root[data-theme="dark"] { --temp: #ff8a5c; --tempc: #ff8a5c; --hum: #55b6f0; --pm25: #a78bfa; --pm10: #2dd4bf; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --temp: #ff8a5c; --tempc: #ff8a5c; --hum: #55b6f0; --pm25: #a78bfa; --pm10: #2dd4bf; }
+}
 
 #trend-sensor { font-size: .82rem; padding: 4px 8px; }
 #trend-charts { display: grid; gap: 14px; grid-template-columns: 1fr; }
@@ -260,14 +263,18 @@ ul.ungrouped li { padding: 6px 0; border-bottom: 1px solid var(--border); font-s
 .chart .grid { stroke: var(--border); stroke-width: 1; opacity: .7; }
 .chart .axis-y { fill: var(--muted); font-size: 10px; text-anchor: end; }
 .chart .axis-x { fill: var(--muted); font-size: 10px; text-anchor: middle; }
-.chart.temp .line { stroke: var(--temp); } .chart.hum .line { stroke: var(--hum); }
-.chart .line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
-.chart.temp .grad-top { stop-color: var(--temp); stop-opacity: .28; }
-.chart.hum  .grad-top { stop-color: var(--hum);  stop-opacity: .28; }
-.grad-bot { stop-color: var(--temp); stop-opacity: 0; }
-.chart.hum .grad-bot { stop-color: var(--hum); stop-opacity: 0; }
-.chart.temp .last, .chart.temp .cdot { fill: var(--temp); }
-.chart.hum .last,  .chart.hum .cdot  { fill: var(--hum); }
+/* One hue per metric via --series, so a new metric costs one line instead of four rules.
+   (The previous shape had an UNQUALIFIED .grad-bot defaulting to --temp, which silently gave
+   any non-hum series an orange fade.) chart.js sets the class from METRICS[].cls. */
+.chart.temp  { --series: var(--temp); }
+.chart.tempc { --series: var(--tempc); }
+.chart.hum   { --series: var(--hum); }
+.chart.pm25  { --series: var(--pm25); }
+.chart.pm10  { --series: var(--pm10); }
+.chart .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .grad-top { stop-color: var(--series); stop-opacity: .28; }
+.chart .grad-bot { stop-color: var(--series); stop-opacity: 0; }
+.chart .last, .chart .cdot { fill: var(--series); }
 .chart .cx { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
 .chart .cdot { stroke: var(--surface); stroke-width: 1.5; }
 .chart-tip {

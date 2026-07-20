@@ -5,11 +5,17 @@
 (function () {
   "use strict";
 
+  // Plot window. Must match the `hours` app.js asks /api/catalog for, or the x-axis will
+  // span a different range than the data.
   const HOURS = 24;
-  const REFRESH_MS = 60 * 1000;
+  // Ordered: doubles as display order. A sensor renders only the entries it reports, so
+  // listing C and F both is safe — no sensor sends both (CONTRACTS.md §1 keeps them distinct).
   const METRICS = [
     { key: "temperature_F", label: "Temperature", unit: "°F", cls: "temp", dec: 1, minSpan: 4 },
+    { key: "temperature_C", label: "Temperature", unit: "°C", cls: "tempc", dec: 1, minSpan: 2 },
     { key: "humidity", label: "Humidity", unit: "%", cls: "hum", dec: 0, minSpan: 8 },
+    { key: "pm25", label: "PM2.5", unit: "µg/m³", cls: "pm25", dec: 0, minSpan: 10 },
+    { key: "pm10", label: "PM10", unit: "µg/m³", cls: "pm10", dec: 0, minSpan: 10 },
   ];
   const W = 760, H = 200, PAD = { l: 40, r: 16, t: 14, b: 22 };
 
@@ -119,9 +125,15 @@
     return wrap;
   }
 
+  // Generic over metric keys. A series object carries only the metrics that sensor actually
+  // reports, so never dereference a specific key — an airmon has no temperature_F, an
+  // rtl433 temp-only sensor has no humidity.
+  const pointCount = (series) => Object.values(series).reduce((n, pts) => n + pts.length, 0);
+
   function sensorsWithData(d) {
-    return Object.keys(d).filter((s) => d[s].temperature_F.length || d[s].humidity.length)
-      .sort((a, b) => (d[b].temperature_F.length + d[b].humidity.length) - (d[a].temperature_F.length + d[a].humidity.length));
+    return Object.keys(d)
+      .filter((s) => pointCount(d[s]) > 0)
+      .sort((a, b) => pointCount(d[b]) - pointCount(d[a]));
   }
 
   function render() {
@@ -142,26 +154,21 @@
       if (!list.includes(sensor)) sensor = list[0];
       sel.value = sensor;
     }
-    const s = data[sensor] || { temperature_F: [], humidity: [] };
+    const s = data[sensor] || {};
     charts.innerHTML = "";
     for (const m of METRICS) {
-      if (!s[m.key].length && m.key === "humidity") continue; // some sensors have no humidity
-      charts.appendChild(makeChart(m, s[m.key]));
-    }
-  }
-
-  async function load() {
-    try {
-      const r = await fetch(`/api/history?hours=${HOURS}`, { headers: { "content-type": "application/json" } });
-      if (!r.ok) throw new Error("HTTP " + r.status);
-      data = (await r.json()).series || {};
-      render();
-    } catch (e) {
-      el("trend-status").textContent = "Trends unavailable: " + e.message;
+      // Chart only what this sensor reports. Charting a metric it never sends renders a
+      // "collecting…" panel that can never fill (airmon + temperature_F did exactly that).
+      const pts = s[m.key];
+      if (!pts || !pts.length) continue;
+      charts.appendChild(makeChart(m, pts));
     }
   }
 
   el("trend-sensor").addEventListener("change", (e) => { sensor = e.target.value; render(); });
-  load();
-  setInterval(load, REFRESH_MS);
+
+  // Push-driven: history rides the /api/catalog response app.js already fetches on its own
+  // 60s loop. A second fetch + timer here would double the Worker invocations for data that
+  // arrives in the same payload. Same pattern as window.initRadar.
+  window.renderTrends = (series) => { data = series || {}; render(); };
 })();

@@ -101,7 +101,7 @@ snippet in `telegraf.d/` (triggers `--watch-config` reload).
 |---|---|---|
 | `GET /aggregates.json` | none (edge-cached, `s-maxage=AGG_PERIOD`) | **Path A** shared aggregates doc |
 | `GET /api/me` | Access JWT | identity + auto-provision user row on first visit |
-| `GET /api/catalog` | Access JWT | sensor list (id, source, type, last_seen) for group pickers |
+| `GET /api/catalog?hours=N` | Access JWT | sensor list (id, source, type, last_seen, latest) **+ `history`**: rolling per-sensor series for the trend charts. `N` defaults to 24, capped at 168. Edge-cached, purged on ingest. |
 | `GET/PUT /api/config` | Access JWT | per-user config (selected shared groups, prefs) |
 | `GET/POST/DELETE /api/custom` | Access JWT | **Path B**: user's custom group defs; GET computes current means on demand from D1 latest |
 | `GET/PUT /api/admin/group_defs` | Access JWT + admin | shared group definitions (bumps `defs_version`) |
@@ -110,6 +110,15 @@ snippet in `telegraf.d/` (triggers `--watch-config` reload).
 ```json
 { "v": 1, "updated": 1752770400, "period_s": 300,
   "groups": { "backyard": { "ts": 1752770400, "fields": { "temperature_F_mean": 71.8 } } } }
+```
+
+`GET /api/catalog` `history` shape — keys are only the metrics each sensor actually reports
+(an airmon has no `temperature_F`, an rtl433 temp-only sensor has no `humidity`), so consumers
+must not assume any particular metric is present:
+```json
+{ "hours": 24,
+  "series": { "airmon001-026210": { "temperature_C": [[1752770400, 24.8]],
+                                    "pm25": [[1752770400, 1]] } } }
 ```
 
 Path B `GET /api/custom` response per group:
