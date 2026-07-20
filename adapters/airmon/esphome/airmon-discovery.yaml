@@ -1,0 +1,78 @@
+# STEP 1 of the ESP32 airmon path: does ESP-IDF's BLE stack discover the vendor service?
+#
+# THIS IS A TEST CONFIG. It reads nothing and publishes nothing. Its only job is to connect
+# to the Airmon and dump the GATT table to the log, answering the one question that decides
+# whether the whole ESP32 approach is viable.
+#
+# WHY IT MATTERS
+# The Airmon's firmware answers ATT_ERROR_ATTRIBUTE_NOT_FOUND to any discovery request whose
+# start handle falls in its handle gap (0x000a-0x001a) instead of returning the next
+# attribute at 0x001b. BlueZ's sequential walk dies there and never sees the vendor service,
+# which is why adapters/airmon/airmon_poller.py skips discovery and uses raw handles.
+# Android does NOT hit this - nRF Connect shows the full service tree - because it discovers
+# via Read-By-Group-Type. ESP-IDF is expected to behave like Android, but this is UNVERIFIED.
+#
+# WHAT TO LOOK FOR IN THE LOG
+#   PASS -> a line containing  baeff316-6be0-4264-9401-142f3e28cf55
+#           plus characteristics 7121461c-... and e4856e91-...
+#           => ESPHome can address them by UUID; the full config is viable.
+#   FAIL -> only 1800 (Generic Access) and 1801 (Generic Attribute) appear, nothing else
+#           => ESP-IDF hits the same firmware bug. UUID addressing cannot work and this
+#              path needs a custom component with handle-level access (much more work);
+#              stick with the Python poller on a host with BLE range.
+#
+# BEFORE FLASHING
+#   * The Airmon holds ONE bond. Flashing and connecting this WILL invalidate pve1's bond
+#     and stop the working poller. Re-pair pve1 afterwards (see ../README.md) if you fall
+#     back. Do this test when you can tolerate the sensor being offline for a bit.
+#   * Board is esp32-c3-devkitm-1: the SwitchBot Plug Mini W1901400 is ESP32-C3 based.
+#     Reaching ESPHome on it requires the SwitchbOTA -> Tasmota -> ESPHome path
+#     (https://github.com/kendallgoto/switchbota). Do NOT upgrade Tasmota past v12; the
+#     partition layout changes and ESPHome will not fit.
+
+esphome:
+  name: airmon-discovery
+
+esp32:
+  board: esp32-c3-devkitm-1
+  variant: esp32c3
+  framework:
+    type: esp-idf          # esp-idf, not arduino: we want ESP-IDF's own GATT client here
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Fallback AP so a failed connect does not brick access to the device
+  ap:
+    ssid: "airmon-discovery-fallback"
+
+captive_portal:
+
+# VERY_VERBOSE on the BLE client is the entire point - it prints each discovered service
+# and characteristic as the GATT table is walked.
+logger:
+  level: DEBUG
+  logs:
+    esp32_ble_client: VERY_VERBOSE
+    esp32_ble_tracker: DEBUG
+    ble_client: VERY_VERBOSE
+
+api:                        # lets `esphome logs` attach over the network
+
+ota:
+  - platform: esphome
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: true            # active scan: request scan response, matching what worked elsewhere
+
+ble_client:
+  - mac_address: C2:33:E9:15:D0:F4
+    id: airmon
+    auto_connect: true
+    on_connect:
+      then:
+        - logger.log: "AIRMON CONNECTED - watch for baeff316-... in the service dump above/below"
+    on_disconnect:
+      then:
+        - logger.log: "AIRMON DISCONNECTED (this device drops links often - expect churn)"

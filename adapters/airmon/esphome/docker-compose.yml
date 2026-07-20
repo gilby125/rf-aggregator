@@ -1,0 +1,25 @@
+# ESPHome dashboard - builds and OTA-flashes firmware for the airmon ESP32 poller variant.
+#
+# NOT a runtime dependency. ESPHome is a BUILD TOOL: once an ESP32 is flashed it runs
+# standalone and publishes MQTT on its own. This service only needs to be up when you are
+# compiling firmware or pushing an OTA update. It can be stopped the rest of the time.
+#
+# No Bluetooth on the host is required or used, so this runs fine in an LXC container
+# (unlike adapters/airmon/airmon_poller.py, which needs AF_BLUETOOTH and therefore cannot
+# run in one).
+#
+# Deploy as its own Komodo stack pointing at this compose file.
+services:
+  esphome:
+    image: ghcr.io/esphome/esphome:latest
+    container_name: esphome
+    restart: unless-stopped
+    # Host networking so mDNS discovery of ESP devices works for OTA. Without it ESPHome
+    # cannot find devices by <name>.local and you must use static IPs.
+    network_mode: host
+    volumes:
+      - ./config:/config
+      - /etc/localtime:/etc/localtime:ro
+    environment:
+      # Dashboard only; firmware itself talks straight to MQTT once flashed.
+      ESPHOME_DASHBOARD_USE_PING: "true"
