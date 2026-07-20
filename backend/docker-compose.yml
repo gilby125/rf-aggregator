@@ -16,7 +16,9 @@ services:
       - --config
       - /etc/telegraf/telegraf.conf
       - --config
-      - /etc/telegraf/adapter.conf
+      - /etc/telegraf/adapters/rtl433.conf
+      - --config
+      - /etc/telegraf/adapters/airmon.conf
       - --config-directory
       - /etc/telegraf/dynamic/telegraf.d
       - --watch-config
@@ -24,6 +26,7 @@ services:
     environment:
       FEED_MQTT_URL: ${FEED_MQTT_URL:-tcp://mosquitto:1883}
       FEED_TOPIC: ${FEED_TOPIC:-rtl_433/events}
+      AIRMON_TOPIC: ${AIRMON_TOPIC:-airmon/events}
       AGG_PERIOD: ${AGG_PERIOD:-5m}
       INFLUX_URL: http://influxdb:8086
       INFLUX_ORG: ${INFLUX_ORG:-rf}
@@ -31,7 +34,10 @@ services:
       INFLUX_TOKEN: ${INFLUX_TOKEN}
     volumes:
       - ./telegraf/telegraf.conf:/etc/telegraf/telegraf.conf:ro
-      - ../adapters/rtl433/adapter.conf:/etc/telegraf/adapter.conf:ro
+      ## One mount per adapter. Adding a decoder = drop in adapters/<name>/adapter.conf,
+      ## mount it here, and add a matching --config flag above.
+      - ../adapters/rtl433/adapter.conf:/etc/telegraf/adapters/rtl433.conf:ro
+      - ../adapters/airmon/adapter.conf:/etc/telegraf/adapters/airmon.conf:ro
       - dynamic_conf:/etc/telegraf/dynamic
 
   influxdb:

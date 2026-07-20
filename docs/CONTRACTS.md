@@ -32,6 +32,16 @@ Rules:
 - `fields` values are numbers. Non-numeric decoder output is dropped by the adapter, not carried.
 - Aggregation (group mean) applies only to `type=sensor`. Other types ride ingest→retain→gateway
   untouched.
+- **Adapters are INPUT-ONLY. An adapter config must never declare a processor.** Telegraf
+  processors are global — there is no per-adapter namespace, so a processor declared in one
+  adapter's file silently rewrites *every* other adapter's metrics. Put source-specific
+  processors in `backend/telegraf/telegraf.conf` with an explicit
+  `[processors.<name>.tagpass] source = ["<that source>"]`.
+  (This is not hypothetical: rtl433's id template ran on airmon envelopes and produced
+  `id="-airmon001-026210"` — empty model, leading dash — with no error logged.)
+- Field names carry their unit when units can differ across sources (`temperature_C` vs
+  `temperature_F`). `aggregators.basicstats` means by field name, so identical names across
+  differing units would be averaged into a meaningless value.
 
 **Telegraf metric mapping** (how the envelope lives inside the aggregator): measurement
 `rf_event`; tags `source`, `type`, `id`, `group` (added by the id→group lookup, `unassigned` if
