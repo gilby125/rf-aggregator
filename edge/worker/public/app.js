@@ -206,7 +206,7 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history 
   const stale = sensors.filter((s) => isStale(s, history, staleThreshold, now)).length;
   const named = Object.keys(sharedDoc.groups || {}).filter((g) => g !== "unassigned").length;
   const groups = named + customGroups.length;
-  const alerts = lowBatt + stale;
+  const live = sensors.length - stale;
   const tile = (label, value, sub, cls = "", extra = "") =>
     `<div class="kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ""}${extra}</div>`;
 
@@ -230,10 +230,15 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history 
       sparkline(((history || {})[worst.sensor_id] || {}).pm25, "pm25"));
   }
 
+  // No Alerts headline tile: it summed low-battery and stale into one number larger than the
+  // device count (a sensor can be both), which read alarming without being actionable. The
+  // per-sensor cards already badge "battery low" / "stale" where you can act on them; the
+  // counts live here as context on the Sensors tile instead.
+  const sub = [`${live} live`, stale ? `${stale} stale` : null, lowBatt ? `${lowBatt} low battery` : null]
+    .filter(Boolean).join(" · ");
   $("#kpis").innerHTML =
-    tile("Sensors", sensors.length, "reporting devices") +
+    tile("Sensors", sensors.length, sub) +
     tile("Groups", groups, `${named} shared · ${customGroups.length} custom`) +
-    tile("Alerts", alerts, alerts ? `${lowBatt} low battery · ${stale} stale` : "all healthy", alerts ? "alert" : "") +
     airTile +
     tile("Last update", sharedDoc.updated ? clock(sharedDoc.updated) : "—", sharedDoc.updated ? ago(sharedDoc.updated) : "waiting for data");
 
