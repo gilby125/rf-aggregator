@@ -335,6 +335,14 @@ $("#custom-form").addEventListener("submit", async (ev) => {
   try { localTheme = localStorage.getItem("rf-theme"); } catch {}
   if (!localTheme && (Config.data.theme === "light" || Config.data.theme === "dark")) applyTheme(Config.data.theme);
 
+  // trends: pinned sensor set persisted per-user, same contract as the radar source
+  if (window.initTrends) {
+    window.initTrends({
+      getPinned: () => Config.data.trend && Config.data.trend.pinned,
+      savePinned: (ids) => Config.patch({ trend: { pinned: ids } }),
+    });
+  }
+
   // radar: hand it the persisted source + a saver (radar.js is loaded before this)
   if (window.initRadar) {
     window.initRadar({

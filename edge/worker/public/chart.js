@@ -28,11 +28,17 @@
   const hhmm = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
   const hlabel = (ts) => new Date(ts * 1000).toLocaleTimeString([], { hour: "numeric" }).replace(/\s/g, "");
 
-  function niceTicks(min, max, n) {
+  // `dec` is the metric's display precision. A metric rendered with 0 decimals must not get
+  // a fractional step: a 2.5 step formats as 0,3,5,8,10,13 — gaps that look uneven and wrong
+  // because each label is rounded independently. Restrict to integer steps in that case.
+  function niceTicks(min, max, n, dec = 1) {
     if (min === max) { min -= 1; max += 1; }
     const span = max - min, step0 = span / n;
     const mag = 10 ** Math.floor(Math.log10(step0));
-    const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((s) => s >= step0) || mag * 10;
+    const cands = [1, 2, 2.5, 5, 10]
+      .map((m) => m * mag)
+      .filter((s) => dec > 0 || (s >= 1 && Number.isInteger(s)));
+    const step = cands.find((s) => s >= step0) || Math.max(mag * 10, 1);
     const lo = Math.floor(min / step) * step, hi = Math.ceil(max / step) * step;
     const ticks = [];
     for (let v = lo; v <= hi + 1e-9; v += step) ticks.push(+v.toFixed(6));
@@ -57,7 +63,7 @@
     const vals = points.map((p) => p[1]);
     let vmin = Math.min(...vals), vmax = Math.max(...vals);
     if (vmax - vmin < metric.minSpan) { const mid = (vmin + vmax) / 2; vmin = mid - metric.minSpan / 2; vmax = mid + metric.minSpan / 2; }
-    const { ticks, lo, hi } = niceTicks(vmin, vmax, 4);
+    const { ticks, lo, hi } = niceTicks(vmin, vmax, 4, metric.dec);
     const X = (ts) => PAD.l + ((ts - xmin) / (xmax - xmin)) * plotW;
     const Y = (v) => PAD.t + (1 - (v - lo) / (hi - lo)) * plotH;
 
@@ -136,6 +142,24 @@
       .sort((a, b) => pointCount(d[b]) - pointCount(d[a]));
   }
 
+  // Pinned sensors render on every load without touching the dropdown; the dropdown stays
+  // for browsing anything else. Persisted per-user (app.js wires it to /api/config, same as
+  // the radar source), so the dashboard always shows something useful on arrival.
+  let pinned = null; // null = never configured -> seed defaults; [] = user pinned nothing
+  let savePinned = () => {};
+  window.initTrends = (opts) => {
+    const saved = opts.getPinned && opts.getPinned();
+    if (Array.isArray(saved)) pinned = saved;
+    savePinned = opts.savePinned || savePinned;
+  };
+
+  // First-run set: the richest sensor plus the first air-quality one, so temperature trends
+  // and PM both appear out of the box rather than only whatever sorts highest.
+  function seedPinned(list) {
+    const pm = list.find((s) => data[s].pm25 || data[s].pm10);
+    return [...new Set([list[0], pm].filter(Boolean))];
+  }
+
   function render() {
     const charts = el("trend-charts");
     if (!data) return;
@@ -147,22 +171,59 @@
       return;
     }
     el("trend-status").textContent = "";
-    // sensor selector
+    if (pinned === null) pinned = seedPinned(list);
+
+    // "— browse another sensor —" so the dropdown is an addition to the pinned set rather
+    // than the only way to see anything.
     const sel = el("trend-sensor");
-    if (sel.options.length !== list.length || !list.includes(sensor)) {
-      sel.innerHTML = list.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
-      if (!list.includes(sensor)) sensor = list[0];
-      sel.value = sensor;
+    if (sel.options.length !== list.length + 1) {
+      sel.innerHTML = `<option value="">— browse a sensor —</option>` +
+        list.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
     }
-    const s = data[sensor] || {};
+    if (sensor && !list.includes(sensor)) sensor = "";
+    sel.value = sensor || "";
+
+    // Pinned first, then whatever is being browsed (if it isn't already pinned).
+    const show = pinned.filter((id) => list.includes(id));
+    if (sensor && !show.includes(sensor)) show.push(sensor);
+
     charts.innerHTML = "";
-    for (const m of METRICS) {
-      // Chart only what this sensor reports. Charting a metric it never sends renders a
-      // "collecting…" panel that can never fill (airmon + temperature_F did exactly that).
-      const pts = s[m.key];
-      if (!pts || !pts.length) continue;
-      charts.appendChild(makeChart(m, pts));
+    if (!show.length) {
+      charts.innerHTML = `<p class="muted">Nothing pinned — pick a sensor above and press ☆ to keep it on the dashboard.</p>`;
+      return;
     }
+
+    for (const id of show) {
+      const on = pinned.includes(id);
+      const block = document.createElement("section");
+      block.className = "trend-block";
+      block.innerHTML =
+        `<div class="trend-block-head">
+           <h3>${esc(id)}</h3>
+           <button class="btn-icon pin${on ? " on" : ""}" data-id="${esc(id)}"
+                   title="${on ? "Unpin from dashboard" : "Pin to dashboard"}"
+                   aria-label="${on ? "Unpin" : "Pin"} ${esc(id)}">${on ? "★" : "☆"}</button>
+         </div><div class="trend-grid"></div>`;
+      const grid = block.querySelector(".trend-grid");
+      for (const m of METRICS) {
+        // Chart only what this sensor reports. Charting a metric it never sends renders a
+        // "collecting…" panel that can never fill (airmon + temperature_F did exactly that).
+        const pts = (data[id] || {})[m.key];
+        if (!pts || !pts.length) continue;
+        grid.appendChild(makeChart(m, pts));
+      }
+      charts.appendChild(block);
+    }
+
+    charts.querySelectorAll(".pin").forEach((b) =>
+      b.addEventListener("click", () => {
+        const id = b.dataset.id;
+        pinned = pinned.includes(id) ? pinned.filter((x) => x !== id) : [...pinned, id];
+        if (pinned.includes(id) && sensor === id) sensor = ""; // pinned now, stop "browsing" it
+        savePinned(pinned);
+        render();
+      })
+    );
   }
 
   el("trend-sensor").addEventListener("change", (e) => { sensor = e.target.value; render(); });
