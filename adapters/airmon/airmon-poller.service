@@ -1,0 +1,32 @@
+[Unit]
+Description=Airmon BLE -> MQTT poller (rf-aggregator airmon adapter)
+Documentation=https://github.com/gilby125/rf-aggregator/blob/master/adapters/airmon/README.md
+After=bluetooth.target network-online.target
+Wants=bluetooth.target network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/airmon
+# Long-running service, NOT a timer-driven one-shot: BLE connection setup is the flaky part
+# of this device, and the poller sleeps between cycles itself (--interval).
+#   --adapter  pve1's BT controller PUBLIC identity. Required: binding with the wrong local
+#              address type is one of the failure modes that silently breaks the ATT socket.
+#   --broker   komodo, running rtl_433-stack-mosquitto which rf-aggregator's Telegraf reads.
+#   --interval 900 = every 15 min, matching SYNC_PERIOD/AGG_PERIOD on the backend.
+#
+# Host-specific values (--adapter, --broker) are correct for pve1 -> komodo. On another
+# host, set them via the AIRMON_ADAPTER / AIRMON_BROKER environment variables instead of
+# editing this file. Install: copy to /etc/systemd/system/, copy airmon_poller.py to
+# /opt/airmon/, then systemctl daemon-reload && systemctl enable --now airmon-poller.
+ExecStart=/usr/bin/python3 -u /opt/airmon/airmon_poller.py \
+    --adapter 40:9C:A7:56:81:81 \
+    --broker 192.168.1.200 \
+    --interval 900 \
+    --retries 5
+Restart=always
+RestartSec=60
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
