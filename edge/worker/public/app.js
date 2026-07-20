@@ -91,16 +91,43 @@ function initTheme() {
   });
 }
 
-// EPA PM2.5 24-hour breakpoints (2012 table). These are bands, not a computed AQI index
-// number — deriving a real AQI needs a 24h average, and we show an instantaneous reading.
-const PM25_BANDS = [
-  { max: 12, label: "Good", cls: "" },
-  { max: 35.4, label: "Moderate", cls: "" },
-  { max: 55.4, label: "Unhealthy for sensitive groups", cls: "alert" },
-  { max: 150.4, label: "Unhealthy", cls: "alert" },
-  { max: 250.4, label: "Very unhealthy", cls: "alert" },
+// EPA concentration -> AQI breakpoints: [Clow, Chigh, Ilow, Ihigh]. PM2.5 uses the 2024
+// revised table, PM10 the 24-hour table. The raw µg/m³ concentration and the AQI index are
+// different quantities — 6 µg/m³ is AQI 33 — so the UI shows both rather than one alone.
+//
+// Caveat: a formally correct AQI uses a 24h average (EPA NowCast); this is computed from the
+// latest instantaneous reading, so treat it as indicative rather than an official figure.
+const AQI_BP = {
+  pm25: [[0, 9, 0, 50], [9.1, 35.4, 51, 100], [35.5, 55.4, 101, 150],
+         [55.5, 125.4, 151, 200], [125.5, 225.4, 201, 300], [225.5, 325.4, 301, 500]],
+  pm10: [[0, 54, 0, 50], [55, 154, 51, 100], [155, 254, 101, 150],
+         [255, 354, 151, 200], [355, 424, 201, 300], [425, 604, 301, 500]],
+};
+
+const AQI_CATEGORIES = [
+  { max: 50, label: "Good", cls: "" },
+  { max: 100, label: "Moderate", cls: "" },
+  { max: 150, label: "Unhealthy for sensitive groups", cls: "alert" },
+  { max: 200, label: "Unhealthy", cls: "alert" },
+  { max: 300, label: "Very unhealthy", cls: "alert" },
   { max: Infinity, label: "Hazardous", cls: "alert" },
 ];
+
+function aqiFrom(conc, table) {
+  if (typeof conc !== "number") return null;
+  for (const [cl, ch, il, ih] of table) {
+    if (conc >= cl && conc <= ch) return Math.round(((ih - il) / (ch - cl)) * (conc - cl) + il);
+  }
+  return conc > 0 ? 500 : null; // above the top breakpoint
+}
+
+// Overall AQI is the worst pollutant's sub-index, per EPA.
+function airQuality(pm25, pm10) {
+  const subs = [aqiFrom(pm25, AQI_BP.pm25), aqiFrom(pm10, AQI_BP.pm10)].filter((v) => v !== null);
+  if (!subs.length) return null;
+  const aqi = Math.max(...subs);
+  return { aqi, ...AQI_CATEGORIES.find((c) => aqi <= c.max) };
+}
 
 // Sensors report at wildly different cadences: rtl433 devices every few seconds, the airmon
 // hourly (--interval 3600). One global threshold marks every slow sensor permanently stale
@@ -156,11 +183,15 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history 
   if (pmSensors.length) {
     const worst = pmSensors.reduce((a, b) => (b.latest.pm25 > a.latest.pm25 ? b : a));
     const p25 = worst.latest.pm25, p10 = worst.latest.pm10;
-    const band = PM25_BANDS.find((b) => p25 <= b.max);
-    const value =
-      `${fmt(p25)}<span class="unit">PM2.5</span>` +
-      (typeof p10 === "number" ? ` <span class="kpi-sep">·</span> ${fmt(p10)}<span class="unit">PM10</span>` : "");
-    airTile = tile("Air quality", value, `${band.label} · µg/m³`, band.cls,
+    const aq = airQuality(p25, p10);
+    // AQI is the headline (it's the number people recognise from weather apps); the actual
+    // concentrations sit underneath with their real unit.
+    const value = aq ? `${aq.aqi}<span class="unit">AQI</span>` : "—";
+    const conc =
+      `PM2.5 ${fmt(p25)}` +
+      (typeof p10 === "number" ? ` · PM10 ${fmt(p10)}` : "") +
+      ` <span class="unit">µg/m³</span>`;
+    airTile = tile("Air quality", value, `${aq ? aq.label : ""} · ${conc}`, aq ? aq.cls : "",
       sparkline(((history || {})[worst.sensor_id] || {}).pm25, "pm25"));
   }
 
