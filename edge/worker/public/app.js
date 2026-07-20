@@ -102,6 +102,25 @@ const PM25_BANDS = [
   { max: Infinity, label: "Hazardous", cls: "alert" },
 ];
 
+// Sensors report at wildly different cadences: rtl433 devices every few seconds, the airmon
+// hourly (--interval 3600). One global threshold marks every slow sensor permanently stale
+// and inflates the Alerts tile. Estimate each sensor's own cadence from the median gap in its
+// history and allow ~2 missed cycles, never dipping below the floor.
+function staleAfter(series, floor) {
+  const ts = [];
+  for (const pts of Object.values(series || {})) for (const p of pts) ts.push(p[0]);
+  if (ts.length < 3) return floor;
+  ts.sort((a, b) => a - b);
+  const gaps = [];
+  for (let i = 1; i < ts.length; i++) if (ts[i] - ts[i - 1] > 0) gaps.push(ts[i] - ts[i - 1]);
+  if (!gaps.length) return floor;
+  gaps.sort((a, b) => a - b);
+  return Math.max(floor, gaps[Math.floor(gaps.length / 2)] * 2.5);
+}
+
+const isStale = (s, history, floor, now) =>
+  (s.last_seen ?? 0) < now - staleAfter((history || {})[s.sensor_id], floor);
+
 // Bare inline sparkline — shape only, no axes or labels. Scales to its own min/max so a
 // flat-ish series still reads. Needs 2+ points; returns "" otherwise so a tile with no
 // history just omits it rather than drawing a degenerate line.
@@ -122,7 +141,7 @@ function sparkline(points, cls) {
 function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history }) {
   const now = Math.floor(Date.now() / 1000);
   const lowBatt = sensors.filter((s) => "battery_ok" in s.latest && !s.latest.battery_ok).length;
-  const stale = sensors.filter((s) => (s.last_seen ?? 0) < now - staleThreshold).length;
+  const stale = sensors.filter((s) => isStale(s, history, staleThreshold, now)).length;
   const named = Object.keys(sharedDoc.groups || {}).filter((g) => g !== "unassigned").length;
   const groups = named + customGroups.length;
   const alerts = lowBatt + stale;
@@ -213,11 +232,11 @@ function startEdit(name, ids) {
 }
 
 // ── individual sensors ─────────────────────────────────────────────────────────
-function renderSensors(sensors, staleThreshold) {
+function renderSensors(sensors, staleThreshold, history) {
   const now = Math.floor(Date.now() / 1000);
   // The section is collapsed by default, so surface the count in the header — otherwise
   // there's no signal about what's behind the disclosure.
-  const fresh = sensors.filter((s) => (s.last_seen ?? 0) >= now - staleThreshold).length;
+  const fresh = sensors.filter((s) => !isStale(s, history, staleThreshold, now)).length;
   $("#sensor-count").textContent =
     `${sensors.length} device${sensors.length === 1 ? "" : "s"} · ${fresh} reporting`;
   $("#sensor-list").innerHTML =
@@ -225,7 +244,7 @@ function renderSensors(sensors, staleThreshold) {
       .map((s) => {
         const badges = [];
         if ("battery_ok" in s.latest && !s.latest.battery_ok) badges.push('<span class="badge danger">battery low</span>');
-        if ((s.last_seen ?? 0) < now - staleThreshold) badges.push('<span class="badge warn">stale</span>');
+        if (isStale(s, history, staleThreshold, now)) badges.push('<span class="badge warn">stale</span>');
         return `<div class="card">
           <div class="card-head"><h3>${esc(s.sensor_id)}</h3>${badges.join("")}</div>
           ${metricRows(s.latest)}
@@ -293,7 +312,7 @@ async function refresh() {
   renderKpis({ sensors, sharedDoc, customGroups, staleThreshold: STALE, history });
   renderShared(sharedDoc);
   renderCustom(customGroups);
-  renderSensors(sensors, STALE);
+  renderSensors(sensors, STALE, history);
   renderUngrouped(sensors, GROUP_DEFS, customGroups);
   renderPicker(sensors);
   // History rides the same response — chart.js does not fetch for itself.
