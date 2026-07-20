@@ -152,6 +152,15 @@ section { margin-top: 30px; }
 .kpi-sub { font-size: .78rem; color: var(--muted); margin-top: 1px; }
 .kpi.alert { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); background: color-mix(in srgb, var(--danger) 8%, var(--surface)); }
 .kpi.alert .kpi-value { color: var(--danger); }
+/* Air-quality tile: two readings side by side, then a bare sparkline. */
+.kpi-value .unit { font-size: .62em; font-weight: 600; color: var(--muted); margin-left: 2px; }
+.kpi-value .kpi-sep { color: var(--border); font-weight: 400; margin: 0 1px; }
+.kpi .spark { width: 100%; height: 26px; display: block; margin-top: 8px; overflow: visible; }
+.kpi .spark path {
+  fill: none; stroke: var(--pm25); stroke-width: 1.7;
+  stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
+}
+.kpi.alert .spark path { stroke: var(--danger); }
 
 /* ---------- cards ---------- */
 .cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr)); }

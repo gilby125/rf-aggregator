@@ -102,25 +102,47 @@ const PM25_BANDS = [
   { max: Infinity, label: "Hazardous", cls: "alert" },
 ];
 
+// Bare inline sparkline — shape only, no axes or labels. Scales to its own min/max so a
+// flat-ish series still reads. Needs 2+ points; returns "" otherwise so a tile with no
+// history just omits it rather than drawing a degenerate line.
+function sparkline(points, cls) {
+  if (!points || points.length < 2) return "";
+  const W = 100, H = 26;
+  const xs = points.map((p) => p[0]), ys = points.map((p) => p[1]);
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(...ys), y1 = Math.max(...ys);
+  if (y1 - y0 < 1e-9) { y0 -= 1; y1 += 1; }
+  const X = (t) => (x1 === x0 ? W : ((t - x0) / (x1 - x0)) * W);
+  const Y = (v) => H - ((v - y0) / (y1 - y0)) * H;
+  const d = points.map((p, i) => (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1)).join(" ");
+  return `<svg class="spark ${cls}" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><path d="${d}"/></svg>`;
+}
+
 // ── KPI stat tiles ───────────────────────────────────────────────────────────
-function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold }) {
+function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history }) {
   const now = Math.floor(Date.now() / 1000);
   const lowBatt = sensors.filter((s) => "battery_ok" in s.latest && !s.latest.battery_ok).length;
   const stale = sensors.filter((s) => (s.last_seen ?? 0) < now - staleThreshold).length;
   const named = Object.keys(sharedDoc.groups || {}).filter((g) => g !== "unassigned").length;
   const groups = named + customGroups.length;
   const alerts = lowBatt + stale;
-  const tile = (label, value, sub, cls = "") =>
-    `<div class="kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ""}</div>`;
-  // Worst-case PM2.5 across everything reporting it. Omitted entirely when no sensor sends
-  // pm25 — a permanent "—" tile is the same empty-widget problem the charts had.
-  const pm = sensors.map((s) => s.latest.pm25).filter((v) => typeof v === "number");
+  const tile = (label, value, sub, cls = "", extra = "") =>
+    `<div class="kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ""}${extra}</div>`;
+
+  // Air quality: show the actual PM2.5 and PM10 readings rather than one figure, from
+  // whichever sensor is currently worst. Omitted entirely when nothing reports pm25 — a
+  // permanent "—" tile is the same empty-widget problem the charts had.
+  const pmSensors = sensors.filter((s) => typeof s.latest.pm25 === "number");
   let airTile = "";
-  if (pm.length) {
-    const worst = Math.max(...pm);
-    const band = PM25_BANDS.find((b) => worst <= b.max);
-    airTile = tile("Air quality", `${fmt(worst)} <span class="unit">µg/m³</span>`,
-      `PM2.5 · ${band.label}`, band.cls);
+  if (pmSensors.length) {
+    const worst = pmSensors.reduce((a, b) => (b.latest.pm25 > a.latest.pm25 ? b : a));
+    const p25 = worst.latest.pm25, p10 = worst.latest.pm10;
+    const band = PM25_BANDS.find((b) => p25 <= b.max);
+    const value =
+      `${fmt(p25)}<span class="unit">PM2.5</span>` +
+      (typeof p10 === "number" ? ` <span class="kpi-sep">·</span> ${fmt(p10)}<span class="unit">PM10</span>` : "");
+    airTile = tile("Air quality", value, `${band.label} · µg/m³`, band.cls,
+      sparkline(((history || {})[worst.sensor_id] || {}).pm25, "pm25"));
   }
 
   $("#kpis").innerHTML =
@@ -267,14 +289,15 @@ async function refresh() {
   ]);
   const sensors = catalog.sensors;
   const customGroups = customRes.groups || [];
-  renderKpis({ sensors, sharedDoc, customGroups, staleThreshold: STALE });
+  const history = (catalog.history && catalog.history.series) || {};
+  renderKpis({ sensors, sharedDoc, customGroups, staleThreshold: STALE, history });
   renderShared(sharedDoc);
   renderCustom(customGroups);
   renderSensors(sensors, STALE);
   renderUngrouped(sensors, GROUP_DEFS, customGroups);
   renderPicker(sensors);
   // History rides the same response — chart.js does not fetch for itself.
-  if (window.renderTrends) window.renderTrends(catalog.history && catalog.history.series);
+  if (window.renderTrends) window.renderTrends(history);
 }
 
 $("#custom-form").addEventListener("submit", async (ev) => {
