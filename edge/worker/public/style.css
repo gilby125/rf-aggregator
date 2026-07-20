@@ -256,8 +256,14 @@ ul.ungrouped li { padding: 6px 0; border-bottom: 1px solid var(--border); font-s
 }
 
 #trend-sensor { font-size: .82rem; padding: 4px 8px; }
-#trend-charts { display: grid; gap: 14px; grid-template-columns: 1fr; }
-@media (min-width: 780px) { #trend-charts { grid-template-columns: 1fr 1fr; } }
+/* One block per pinned sensor, each with its own grid of metric charts. */
+#trend-charts { display: grid; gap: 22px; grid-template-columns: 1fr; }
+.trend-block-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.trend-block-head h3 { font-size: .92rem; font-weight: 650; margin: 0; }
+.trend-block-head .pin { font-size: 1rem; line-height: 1; color: var(--muted); }
+.trend-block-head .pin.on { color: var(--accent); }
+.trend-grid { display: grid; gap: 14px; grid-template-columns: 1fr; }
+@media (min-width: 780px) { .trend-grid { grid-template-columns: 1fr 1fr; } }
 .chart {
   position: relative; background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px 6px; box-shadow: var(--shadow);
