@@ -328,10 +328,12 @@ let ME = null, GROUP_DEFS = null;
 const STALE = 600; // seconds; matches the backend's 2×period staleness idea loosely
 const TREND_HOURS = 24; // must match HOURS in chart.js (the plot window)
 
-async function refresh() {
-  // Nothing to do for a tab nobody is looking at — a backgrounded dashboard otherwise burns
-  // an invocation a minute forever. visibilitychange (below) refreshes once on return.
-  if (document.hidden) return;
+// `periodic` marks the 60s timer's calls, which are the only ones worth skipping for a hidden
+// tab. The initial load and user-initiated refreshes must always render: a tab opened in the
+// background (ctrl+click, session restore) is hidden at load time, and gating that leaves the
+// dashboard completely blank until it is focused.
+async function refresh({ periodic = false } = {}) {
+  if (periodic && document.hidden) return;
   const [catalog, sharedDoc, customRes] = await Promise.all([
     api(`/api/catalog?hours=${TREND_HOURS}`),
     api("/aggregates.json"),
@@ -388,7 +390,7 @@ $("#custom-form").addEventListener("submit", async (ev) => {
 
   await refresh();
   await initAdmin(ME, GROUP_DEFS);
-  setInterval(refresh, 60_000);
+  setInterval(() => refresh({ periodic: true }), 60_000);
   // Catch up immediately on return rather than making the user wait out the interval.
   document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 })().catch((e) => {
