@@ -17,12 +17,14 @@ const stamp = (ts) => (ts ? `${clock(ts)} · ${ago(ts)}` : "never");
 // Pretty labels + units for known rtl_433 fields; unknown keys fall back to the raw name.
 const UNITS = {
   temperature_F: "°F", temperature_C: "°C", humidity: "%",
+  pm25: "µg/m³", pm10: "µg/m³",
   wind_avg_mi_h: "mph", wind_max_mi_h: "mph", wind_gust_mi_h: "mph", wind_dir_deg: "°",
   rain_in: "in", rain_mm: "mm", rain_rate_in_h: "in/h", pressure_hPa: "hPa",
   freq: "MHz", rssi: "dB", snr: "dB", noise: "dB", battery_V: "V", light_lux: "lux", uv: "UV",
 };
 const LABELS = {
   temperature_F: "Temperature", temperature_C: "Temperature", humidity: "Humidity",
+  pm25: "PM2.5", pm10: "PM10",
   wind_avg_mi_h: "Wind avg", wind_max_mi_h: "Wind max", wind_gust_mi_h: "Wind gust", wind_dir_deg: "Wind dir",
   rain_in: "Rain", rain_mm: "Rain", rain_rate_in_h: "Rain rate", pressure_hPa: "Pressure",
   message_type: "Msg type", sequence_num: "Seq", protocol: "Protocol", freq: "Freq",
@@ -89,6 +91,17 @@ function initTheme() {
   });
 }
 
+// EPA PM2.5 24-hour breakpoints (2012 table). These are bands, not a computed AQI index
+// number — deriving a real AQI needs a 24h average, and we show an instantaneous reading.
+const PM25_BANDS = [
+  { max: 12, label: "Good", cls: "" },
+  { max: 35.4, label: "Moderate", cls: "" },
+  { max: 55.4, label: "Unhealthy for sensitive groups", cls: "alert" },
+  { max: 150.4, label: "Unhealthy", cls: "alert" },
+  { max: 250.4, label: "Very unhealthy", cls: "alert" },
+  { max: Infinity, label: "Hazardous", cls: "alert" },
+];
+
 // ── KPI stat tiles ───────────────────────────────────────────────────────────
 function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold }) {
   const now = Math.floor(Date.now() / 1000);
@@ -99,10 +112,22 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold }) {
   const alerts = lowBatt + stale;
   const tile = (label, value, sub, cls = "") =>
     `<div class="kpi ${cls}"><div class="kpi-label">${label}</div><div class="kpi-value">${value}</div>${sub ? `<div class="kpi-sub">${sub}</div>` : ""}</div>`;
+  // Worst-case PM2.5 across everything reporting it. Omitted entirely when no sensor sends
+  // pm25 — a permanent "—" tile is the same empty-widget problem the charts had.
+  const pm = sensors.map((s) => s.latest.pm25).filter((v) => typeof v === "number");
+  let airTile = "";
+  if (pm.length) {
+    const worst = Math.max(...pm);
+    const band = PM25_BANDS.find((b) => worst <= b.max);
+    airTile = tile("Air quality", `${fmt(worst)} <span class="unit">µg/m³</span>`,
+      `PM2.5 · ${band.label}`, band.cls);
+  }
+
   $("#kpis").innerHTML =
     tile("Sensors", sensors.length, "reporting devices") +
     tile("Groups", groups, `${named} shared · ${customGroups.length} custom`) +
     tile("Alerts", alerts, alerts ? `${lowBatt} low battery · ${stale} stale` : "all healthy", alerts ? "alert" : "") +
+    airTile +
     tile("Last update", sharedDoc.updated ? clock(sharedDoc.updated) : "—", sharedDoc.updated ? ago(sharedDoc.updated) : "waiting for data");
 
   const pill = $("#updated-pill");
@@ -168,6 +193,11 @@ function startEdit(name, ids) {
 // ── individual sensors ─────────────────────────────────────────────────────────
 function renderSensors(sensors, staleThreshold) {
   const now = Math.floor(Date.now() / 1000);
+  // The section is collapsed by default, so surface the count in the header — otherwise
+  // there's no signal about what's behind the disclosure.
+  const fresh = sensors.filter((s) => (s.last_seen ?? 0) >= now - staleThreshold).length;
+  $("#sensor-count").textContent =
+    `${sensors.length} device${sensors.length === 1 ? "" : "s"} · ${fresh} reporting`;
   $("#sensor-list").innerHTML =
     sensors
       .map((s) => {
@@ -224,10 +254,14 @@ async function initAdmin(me, groupDefs) {
 // ── data flow ───────────────────────────────────────────────────────────────────
 let ME = null, GROUP_DEFS = null;
 const STALE = 600; // seconds; matches the backend's 2×period staleness idea loosely
+const TREND_HOURS = 24; // must match HOURS in chart.js (the plot window)
 
 async function refresh() {
+  // Nothing to do for a tab nobody is looking at — a backgrounded dashboard otherwise burns
+  // an invocation a minute forever. visibilitychange (below) refreshes once on return.
+  if (document.hidden) return;
   const [catalog, sharedDoc, customRes] = await Promise.all([
-    api("/api/catalog"),
+    api(`/api/catalog?hours=${TREND_HOURS}`),
     api("/aggregates.json"),
     api("/api/custom").catch(() => ({ groups: [] })),
   ]);
@@ -239,6 +273,8 @@ async function refresh() {
   renderSensors(sensors, STALE);
   renderUngrouped(sensors, GROUP_DEFS, customGroups);
   renderPicker(sensors);
+  // History rides the same response — chart.js does not fetch for itself.
+  if (window.renderTrends) window.renderTrends(catalog.history && catalog.history.series);
 }
 
 $("#custom-form").addEventListener("submit", async (ev) => {
@@ -272,6 +308,8 @@ $("#custom-form").addEventListener("submit", async (ev) => {
   await refresh();
   await initAdmin(ME, GROUP_DEFS);
   setInterval(refresh, 60_000);
+  // Catch up immediately on return rather than making the user wait out the interval.
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) refresh(); });
 })().catch((e) => {
   document.body.insertAdjacentHTML("beforeend", `<p class="error">${esc(e.message)}</p>`);
 });
