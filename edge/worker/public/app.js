@@ -31,6 +31,41 @@ const LABELS = {
 };
 const label = (k) => LABELS[k] || k.replace(/_/g, " ");
 
+// The dashboard is imperial (°F, mph, in) but the airmon reports Celsius. The pipeline
+// deliberately keeps temperature_C and temperature_F as separate fields — CONTRACTS.md §1,
+// because aggregators.basicstats averages by field name and mixing units would produce a
+// meaningless number. So convert for DISPLAY ONLY, right where the payload lands, and every
+// renderer downstream then sees a single temperature unit.
+const cToF = (c) => (c * 9) / 5 + 32;
+
+function toDisplayUnits(fields) {
+  if (!fields) return fields;
+  const out = {};
+  for (const [k, v] of Object.entries(fields)) {
+    const isC = k === "temperature_C" || k === "temperature_C_mean";
+    const target = k.replace("temperature_C", "temperature_F");
+    // Never clobber a real Fahrenheit reading if a sensor somehow reports both.
+    if (isC && typeof v === "number" && !(target in fields)) out[target] = cToF(v);
+    else out[k] = v;
+  }
+  return out;
+}
+
+// Same conversion for the [[ts, value], …] history series.
+function historyToDisplayUnits(series) {
+  const out = {};
+  for (const [id, metrics] of Object.entries(series || {})) {
+    const m = {};
+    for (const [k, pts] of Object.entries(metrics)) {
+      if (k === "temperature_C" && !("temperature_F" in metrics)) {
+        m.temperature_F = pts.map(([t, v]) => [t, cToF(v)]);
+      } else m[k] = pts;
+    }
+    out[id] = m;
+  }
+  return out;
+}
+
 // Radio/protocol fields: meaningless to average, hidden from GROUP cards (kept on
 // individual sensor cards, where per-device signal info is useful).
 const GROUP_HIDE = new Set([
@@ -339,9 +374,11 @@ async function refresh({ periodic = false } = {}) {
     api("/aggregates.json"),
     api("/api/custom").catch(() => ({ groups: [] })),
   ]);
-  const sensors = catalog.sensors;
-  const customGroups = customRes.groups || [];
-  const history = (catalog.history && catalog.history.series) || {};
+  // Normalise units once, here, so every renderer below is unit-agnostic.
+  const sensors = catalog.sensors.map((s) => ({ ...s, latest: toDisplayUnits(s.latest) }));
+  const customGroups = (customRes.groups || []).map((g) => ({ ...g, computed: toDisplayUnits(g.computed) }));
+  for (const g of Object.values(sharedDoc.groups || {})) g.fields = toDisplayUnits(g.fields);
+  const history = historyToDisplayUnits((catalog.history && catalog.history.series) || {});
   renderKpis({ sensors, sharedDoc, customGroups, staleThreshold: STALE, history });
   renderShared(sharedDoc);
   renderCustom(customGroups);
