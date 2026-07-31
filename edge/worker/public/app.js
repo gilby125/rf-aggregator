@@ -230,6 +230,52 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history 
       sparkline(((history || {})[worst.sensor_id] || {}).pm25, "pm25"));
   }
 
+  // Rain: rtl_433 rain_in / rain_mm are LIFETIME counters, meaningless as a raw value. Convert
+  // to "rain in the last 24h" per gauge using the history series (window.rainAccumSeries is
+  // reset-aware — a battery pull or reboot doesn't dive the baseline). Headline is the max
+  // across gauges: one silent / stuck gauge shouldn't drag the number down. Tile is omitted
+  // entirely when no sensor reports rain, same rule the Air quality tile follows.
+  const rainSensors = sensors
+    .map((s) => {
+      const h = (history || {})[s.sensor_id] || {};
+      const inPts = h.rain_in, mmPts = h.rain_mm;
+      const hasCounter = (inPts && inPts.length) || (mmPts && mmPts.length);
+      const rate = s.latest.rain_rate_in_h;
+      if (!hasCounter && typeof rate !== "number") return null;
+      const cumIn = inPts && inPts.length
+        ? window.rainAccumulation(inPts)
+        : mmPts && mmPts.length
+          ? window.rainAccumulation(mmPts) / 25.4
+          : 0;
+      const accumSeries = inPts && inPts.length
+        ? window.rainAccumSeries(inPts)
+        : mmPts && mmPts.length
+          ? window.rainAccumSeries(mmPts).map(([t, v]) => [t, v / 25.4])
+          : null;
+      return { id: s.sensor_id, cumIn, rate: typeof rate === "number" ? rate : null, accumSeries };
+    })
+    .filter(Boolean);
+  let rainTile = "";
+  if (rainSensors.length) {
+    const worst = rainSensors.reduce((a, b) => (b.cumIn > a.cumIn ? b : a));
+    const value = `${fmt(worst.cumIn)}<span class="unit">in</span>`;
+    const perGauge = rainSensors.length > 1
+      ? rainSensors.map((r) => fmt(r.cumIn)).join(" · ") + ' <span class="unit">in</span>'
+      : "24h total";
+    const rates = rainSensors.map((r) => r.rate).filter((v) => typeof v === "number");
+    const rateStr = rates.length
+      ? ` · rate ${fmt(Math.max(...rates))} <span class="unit">in/h</span>`
+      : "";
+    const anyRain = rainSensors.some((r) => r.cumIn > 0) || rates.some((v) => v > 0);
+    rainTile = tile(
+      "Rain 24h",
+      value,
+      `${perGauge}${rateStr}${anyRain ? "" : " · dry"}`,
+      "",
+      worst.accumSeries ? sparkline(worst.accumSeries, "rain") : ""
+    );
+  }
+
   // No Alerts headline tile: it summed low-battery and stale into one number larger than the
   // device count (a sensor can be both), which read alarming without being actionable. The
   // per-sensor cards already badge "battery low" / "stale" where you can act on them; the
@@ -240,6 +286,7 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history 
     tile("Sensors", sensors.length, sub) +
     tile("Groups", groups, `${named} shared · ${customGroups.length} custom`) +
     airTile +
+    rainTile +
     tile("Last update", sharedDoc.updated ? clock(sharedDoc.updated) : "—", sharedDoc.updated ? ago(sharedDoc.updated) : "waiting for data");
 
   const pill = $("#updated-pill");

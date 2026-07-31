@@ -10,13 +10,40 @@
   const HOURS = 24;
   // Ordered: doubles as display order. A sensor renders only the entries it reports, so
   // listing C and F both is safe — no sensor sends both (CONTRACTS.md §1 keeps them distinct).
+  // `transform: "accum"` marks a cumulative counter (rtl_433 rain_in / rain_mm are lifetime
+  // totals since device power-on). Plotted raw they look nearly flat; we convert to
+  // rain-in-window so each step is a rain event and the current value is "total in the last
+  // HOURS" rather than an opaque running counter.
   const METRICS = [
     { key: "temperature_F", label: "Temperature", unit: "°F", cls: "temp", dec: 1, minSpan: 4 },
     { key: "temperature_C", label: "Temperature", unit: "°C", cls: "tempc", dec: 1, minSpan: 2 },
     { key: "humidity", label: "Humidity", unit: "%", cls: "hum", dec: 0, minSpan: 8 },
     { key: "pm25", label: "PM2.5", unit: "µg/m³", cls: "pm25", dec: 0, minSpan: 10 },
     { key: "pm10", label: "PM10", unit: "µg/m³", cls: "pm10", dec: 0, minSpan: 10 },
+    { key: "rain_in", label: "Rain (24h)", unit: "in", cls: "rain", dec: 2, minSpan: 0.1, transform: "accum" },
+    { key: "rain_mm", label: "Rain (24h)", unit: "mm", cls: "rain", dec: 1, minSpan: 2, transform: "accum" },
+    { key: "rain_rate_in_h", label: "Rain rate", unit: "in/h", cls: "rainrate", dec: 2, minSpan: 0.1 },
   ];
+
+  // Cumulative-counter → in-window accumulation. Reset-aware: any negative step (device
+  // reboot, battery pull) is clamped to 0 so the series doesn't dive to a lower baseline
+  // and swallow subsequent rain. Exposed for app.js so the KPI tile agrees with the chart.
+  function toAccum(points) {
+    if (!points || points.length < 1) return [];
+    const out = [[points[0][0], 0]];
+    let cum = 0;
+    for (let i = 1; i < points.length; i++) {
+      const d = points[i][1] - points[i - 1][1];
+      if (d > 0) cum += d;
+      out.push([points[i][0], cum]);
+    }
+    return out;
+  }
+  window.rainAccumulation = (points) => {
+    const a = toAccum(points);
+    return a.length ? a[a.length - 1][1] : 0;
+  };
+  window.rainAccumSeries = toAccum;
   const W = 760, H = 200, PAD = { l: 40, r: 16, t: 14, b: 22 };
 
   let data = null, sensor = null;
@@ -153,11 +180,13 @@
     savePinned = opts.savePinned || savePinned;
   };
 
-  // First-run set: the richest sensor plus the first air-quality one, so temperature trends
-  // and PM both appear out of the box rather than only whatever sorts highest.
+  // First-run set: the richest sensor plus the first air-quality one plus the first rain
+  // gauge, so temperature / PM / rain all appear out of the box rather than only whatever
+  // sorts highest by point count.
   function seedPinned(list) {
     const pm = list.find((s) => data[s].pm25 || data[s].pm10);
-    return [...new Set([list[0], pm].filter(Boolean))];
+    const rain = list.find((s) => data[s].rain_in || data[s].rain_mm || data[s].rain_rate_in_h);
+    return [...new Set([list[0], pm, rain].filter(Boolean))];
   }
 
   function render() {
@@ -208,8 +237,9 @@
       for (const m of METRICS) {
         // Chart only what this sensor reports. Charting a metric it never sends renders a
         // "collecting…" panel that can never fill (airmon + temperature_F did exactly that).
-        const pts = (data[id] || {})[m.key];
-        if (!pts || !pts.length) continue;
+        const raw = (data[id] || {})[m.key];
+        if (!raw || !raw.length) continue;
+        const pts = m.transform === "accum" ? toAccum(raw) : raw;
         grid.appendChild(makeChart(m, pts));
       }
       charts.appendChild(block);

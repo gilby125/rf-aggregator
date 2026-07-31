@@ -160,6 +160,7 @@ section { margin-top: 30px; }
   fill: none; stroke: var(--pm25); stroke-width: 1.7;
   stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke;
 }
+.kpi .spark.rain path { stroke: var(--rain); }
 .kpi.alert .spark path { stroke: var(--danger); }
 
 /* ---------- cards ---------- */
@@ -249,10 +250,13 @@ ul.ungrouped li { padding: 6px 0; border-bottom: 1px solid var(--border); font-s
 .radar-status { padding: 10px 16px; color: var(--muted); font-size: .82rem; }
 
 /* ---------- 24h trend charts ---------- */
-:root { --temp: #e8663c; --tempc: #e8663c; --hum: #2f8fd6; --pm25: #8b5cf6; --pm10: #0f9b8e; }
-:root[data-theme="dark"] { --temp: #ff8a5c; --tempc: #ff8a5c; --hum: #55b6f0; --pm25: #a78bfa; --pm10: #2dd4bf; }
+:root { --temp: #e8663c; --tempc: #e8663c; --hum: #2f8fd6; --pm25: #8b5cf6; --pm10: #0f9b8e;
+        --rain: #1e6ec8; --rainrate: #0aa39b; }
+:root[data-theme="dark"] { --temp: #ff8a5c; --tempc: #ff8a5c; --hum: #55b6f0; --pm25: #a78bfa; --pm10: #2dd4bf;
+        --rain: #5aa4ee; --rainrate: #48d5cc; }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) { --temp: #ff8a5c; --tempc: #ff8a5c; --hum: #55b6f0; --pm25: #a78bfa; --pm10: #2dd4bf; }
+  :root:not([data-theme="light"]) { --temp: #ff8a5c; --tempc: #ff8a5c; --hum: #55b6f0; --pm25: #a78bfa; --pm10: #2dd4bf;
+        --rain: #5aa4ee; --rainrate: #48d5cc; }
 }
 
 #trend-sensor { font-size: .82rem; padding: 4px 8px; }
@@ -281,11 +285,13 @@ ul.ungrouped li { padding: 6px 0; border-bottom: 1px solid var(--border); font-s
 /* One hue per metric via --series, so a new metric costs one line instead of four rules.
    (The previous shape had an UNQUALIFIED .grad-bot defaulting to --temp, which silently gave
    any non-hum series an orange fade.) chart.js sets the class from METRICS[].cls. */
-.chart.temp  { --series: var(--temp); }
-.chart.tempc { --series: var(--tempc); }
-.chart.hum   { --series: var(--hum); }
-.chart.pm25  { --series: var(--pm25); }
-.chart.pm10  { --series: var(--pm10); }
+.chart.temp     { --series: var(--temp); }
+.chart.tempc    { --series: var(--tempc); }
+.chart.hum      { --series: var(--hum); }
+.chart.pm25     { --series: var(--pm25); }
+.chart.pm10     { --series: var(--pm10); }
+.chart.rain     { --series: var(--rain); }
+.chart.rainrate { --series: var(--rainrate); }
 .chart .line { fill: none; stroke: var(--series); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .chart .grad-top { stop-color: var(--series); stop-opacity: .28; }
 .chart .grad-bot { stop-color: var(--series); stop-opacity: 0; }
