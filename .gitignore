@@ -3,6 +3,10 @@ node_modules/
 .dev.vars
 *.log
 
+# Python bytecode — a stray poller run under any repo path drops these.
+__pycache__/
+*.pyc
+
 # Secrets. Note ".env" alone does NOT match "komodo.env" or "backend/.env.local" —
 # these patterns are deliberately broader.
 .env
