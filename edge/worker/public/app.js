@@ -235,7 +235,11 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history 
   // reset-aware — a battery pull or reboot doesn't dive the baseline). Headline is the max
   // across gauges: one silent / stuck gauge shouldn't drag the number down. Tile is omitted
   // entirely when no sensor reports rain, same rule the Air quality tile follows.
+  // Skip stale gauges: an envelope-id rollover (channel/id change) leaves a dead ghost id whose
+  // partial lifetime accumulation would otherwise show as a phantom extra gauge in the breakdown
+  // (and could win the headline max). Same freshness rule the trend charts use.
   const rainSensors = sensors
+    .filter((s) => !isStale(s, history, staleThreshold, now))
     .map((s) => {
       const h = (history || {})[s.sensor_id] || {};
       const inPts = h.rain_in, mmPts = h.rain_mm;
