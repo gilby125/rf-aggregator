@@ -163,10 +163,24 @@
   // rtl433 temp-only sensor has no humidity.
   const pointCount = (series) => Object.values(series).reduce((n, pts) => n + pts.length, 0);
 
+  // Freshness. A ghost id left behind when the envelope id scheme changes (a channel/id
+  // rollover splits history into a dead old id + a live new one) keeps ALL its accumulated
+  // points, so it outranks the young live sensor on point count and gets auto-pinned — the
+  // dashboard then opens on a dead series whose last point "ends" at the moment of the split.
+  // Rank fresh sensors first so seeding/sorting land on the live one; dormant ids stay in the
+  // dropdown for anyone who wants to look at a stopped sensor.
+  const STALE_S = 3600;
+  const lastTs = (series) => {
+    let m = 0;
+    for (const pts of Object.values(series)) { const p = pts[pts.length - 1]; if (p && p[0] > m) m = p[0]; }
+    return m;
+  };
+  const isFresh = (series) => Math.floor(Date.now() / 1000) - lastTs(series) <= STALE_S;
+
   function sensorsWithData(d) {
     return Object.keys(d)
       .filter((s) => pointCount(d[s]) > 0)
-      .sort((a, b) => pointCount(d[b]) - pointCount(d[a]));
+      .sort((a, b) => (isFresh(d[b]) - isFresh(d[a])) || (pointCount(d[b]) - pointCount(d[a])));
   }
 
   // Pinned sensors render on every load without touching the dropdown; the dropdown stays
