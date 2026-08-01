@@ -232,51 +232,67 @@ function renderKpis({ sensors, sharedDoc, customGroups, staleThreshold, history 
 
   // Rain: rtl_433 rain_in / rain_mm are LIFETIME counters, meaningless as a raw value. Convert
   // to "rain in the last 24h" per gauge using the history series (window.rainAccumSeries is
-  // reset-aware — a battery pull or reboot doesn't dive the baseline). Headline is the max
-  // across gauges: one silent / stuck gauge shouldn't drag the number down. Tile is omitted
+  // reset-aware — a battery pull or reboot doesn't dive the baseline). Device-agnostic: any
+  // sensor reporting rain is a candidate, keyed on nothing but its fields. Tile is omitted
   // entirely when no sensor reports rain, same rule the Air quality tile follows.
   // Skip stale gauges: an envelope-id rollover (channel/id change) leaves a dead ghost id whose
-  // partial lifetime accumulation would otherwise show as a phantom extra gauge in the breakdown
-  // (and could win the headline max). Same freshness rule the trend charts use.
+  // partial lifetime accumulation would otherwise show as a phantom extra gauge. Same freshness
+  // rule the trend charts use.
+  //
+  // The headline is the MEAN of the gauges' 24h totals, so inclusion is stricter than "reports
+  // rain": a gauge only enters the average if it can produce a CORRECT total — a counter series
+  // (rain_in / rain_mm) with >= 2 points to delta between. A rate-only sensor, or one that just
+  // appeared with < 2 counter points, has no computable total; under the old max headline its
+  // cumIn=0 was harmless, but a 0 in a mean silently drags it down, so those are carried as
+  // rate-only (hasTotal=false) and excluded from the averaged number and the per-gauge breakdown.
   const rainSensors = sensors
     .filter((s) => !isStale(s, history, staleThreshold, now))
     .map((s) => {
       const h = (history || {})[s.sensor_id] || {};
       const inPts = h.rain_in, mmPts = h.rain_mm;
-      const hasCounter = (inPts && inPts.length) || (mmPts && mmPts.length);
-      const rate = s.latest.rain_rate_in_h;
-      if (!hasCounter && typeof rate !== "number") return null;
-      const cumIn = inPts && inPts.length
-        ? window.rainAccumulation(inPts)
-        : mmPts && mmPts.length
-          ? window.rainAccumulation(mmPts) / 25.4
-          : 0;
-      const accumSeries = inPts && inPts.length
-        ? window.rainAccumSeries(inPts)
-        : mmPts && mmPts.length
-          ? window.rainAccumSeries(mmPts).map(([t, v]) => [t, v / 25.4])
+      // in wins over mm when both exist; need >= 2 points for a real delta. scale mm -> in.
+      const counter = inPts && inPts.length >= 2 ? { pts: inPts, scale: 1 }
+        : mmPts && mmPts.length >= 2 ? { pts: mmPts, scale: 1 / 25.4 }
           : null;
-      return { id: s.sensor_id, cumIn, rate: typeof rate === "number" ? rate : null, accumSeries };
+      const rate = s.latest.rain_rate_in_h;
+      if (!counter && typeof rate !== "number") return null;
+      const cumIn = counter ? window.rainAccumulation(counter.pts) * counter.scale : null;
+      const accumSeries = counter
+        ? window.rainAccumSeries(counter.pts).map(([t, v]) => [t, v * counter.scale])
+        : null;
+      return {
+        id: s.sensor_id,
+        cumIn,
+        hasTotal: cumIn !== null,
+        rate: typeof rate === "number" ? rate : null,
+        accumSeries,
+      };
     })
     .filter(Boolean);
   let rainTile = "";
   if (rainSensors.length) {
-    const worst = rainSensors.reduce((a, b) => (b.cumIn > a.cumIn ? b : a));
-    const value = `${fmt(worst.cumIn)}<span class="unit">in</span>`;
-    const perGauge = rainSensors.length > 1
-      ? rainSensors.map((r) => fmt(r.cumIn)).join(" · ") + ' <span class="unit">in</span>'
+    const gauges = rainSensors.filter((r) => r.hasTotal); // only those with a computable 24h total
+    const avgIn = gauges.length
+      ? gauges.reduce((sum, r) => sum + r.cumIn, 0) / gauges.length
+      : null;
+    const spark = gauges.length
+      ? gauges.reduce((a, b) => (b.cumIn > a.cumIn ? b : a))
+      : null;
+    const value = avgIn !== null ? `${fmt(avgIn)}<span class="unit">in</span>` : "—";
+    const perGauge = gauges.length > 1
+      ? gauges.map((r) => fmt(r.cumIn)).join(" · ") + ' <span class="unit">in</span>'
       : "24h total";
     const rates = rainSensors.map((r) => r.rate).filter((v) => typeof v === "number");
     const rateStr = rates.length
       ? ` · rate ${fmt(Math.max(...rates))} <span class="unit">in/h</span>`
       : "";
-    const anyRain = rainSensors.some((r) => r.cumIn > 0) || rates.some((v) => v > 0);
+    const anyRain = gauges.some((r) => r.cumIn > 0) || rates.some((v) => v > 0);
     rainTile = tile(
       "Rain 24h",
       value,
       `${perGauge}${rateStr}${anyRain ? "" : " · dry"}`,
       "",
-      worst.accumSeries ? sparkline(worst.accumSeries, "rain") : ""
+      spark && spark.accumSeries ? sparkline(spark.accumSeries, "rain") : ""
     );
   }
 
