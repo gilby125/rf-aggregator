@@ -38,24 +38,26 @@
   const el = (id) => document.getElementById(id);
 
   // ── theme-matched base map ─────────────────────────────────────────────
+  // OpenStreetMap raster tiles (no signup, no key). Dark mode uses a CSS
+  // filter on the layer container — OSM has no dark variant.
   function effectiveTheme() {
     const t = document.documentElement.getAttribute("data-theme");
     if (t) return t;
     return matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   }
-  function baseTileUrl() {
-    const style = effectiveTheme() === "dark" ? "dark_all" : "light_all";
-    return "https://{s}.basemaps.cartocdn.com/" + style + "/{z}/{x}/{y}{r}.png";
-  }
   function setBase() {
-    const layer = L.tileLayer(baseTileUrl(), {
-      attribution: "&copy; OpenStreetMap contributors &copy; CARTO",
-      subdomains: "abcd", maxZoom: 12, detectRetina: true,
+    const layer = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "&copy; OpenStreetMap contributors",
+      maxZoom: 12,
     });
     layer.addTo(map);
     layer.bringToBack();
     if (baseLayer) map.removeLayer(baseLayer);
     baseLayer = layer;
+    const el = layer.getContainer && layer.getContainer();
+    if (el) el.style.filter = effectiveTheme() === "dark"
+      ? "invert(1) hue-rotate(180deg) brightness(0.9) contrast(0.9)"
+      : "";
   }
 
   // ── radar frames ───────────────────────────────────────────────────────
