@@ -1,0 +1,85 @@
+# rtl_433 telemetry stack
+#   rtl_433 → MQTT (phone app / SmartThings)  +  InfluxDB → Grafana (history / averaging)
+# All off-the-shelf images. Deploy on the komodo LXC (RTL-SDR passed through from Proxmox).
+# Secrets come from .env (INFLUX_TOKEN, INFLUX_PASSWORD, GRAFANA_PASSWORD).
+services:
+  rtl_433:
+    image: hertzg/rtl_433:latest
+    restart: unless-stopped
+    depends_on:
+      mosquitto:
+        condition: service_started
+      influxdb:
+        condition: service_healthy
+    devices:
+      - /dev/bus/usb:/dev/bus/usb          # whole USB tree: robust to bus/device renumbering
+    command:
+      - -f
+      - 433.92M                            # fixed 433.92 catches ALL your sensors; do NOT band-hop
+      - -C
+      - customary                          # imperial units (°F, mph, in)
+      - -M
+      - time:unix:usec:utc                 # correct timestamps for InfluxDB
+      - -M
+      - protocol
+      - -M
+      - level
+      - -F
+      - mqtt://mosquitto:1883,retain=1,events,devices=rtl_433[/model][/id]
+      - -F
+      - influx://influxdb:8086/api/v2/write?org=home&bucket=sensors,token=${INFLUX_TOKEN}
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    ports:
+      - "1883:1883"                        # phone app + SmartThings connect here
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mosquitto_data:/mosquitto/data
+    healthcheck:
+      test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-W", "3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  influxdb:
+    image: influxdb:2
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUX_PASSWORD}
+      DOCKER_INFLUXDB_INIT_ORG: home
+      DOCKER_INFLUXDB_INIT_BUCKET: sensors
+      DOCKER_INFLUXDB_INIT_RETENTION: 0s
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUX_TOKEN}
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  grafana:
+    image: grafana/grafana-oss:latest
+    restart: unless-stopped
+    depends_on:
+      influxdb:
+        condition: service_healthy
+    ports:
+      - "3000:3000"                        # dashboards in phone browser (add to home screen)
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD}
+      INFLUX_TOKEN: ${INFLUX_TOKEN}        # consumed by provisioned datasource
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana_data:/var/lib/grafana
+
+volumes:
+  mosquitto_data:
+  influxdb_data:
+  grafana_data:
