@@ -73,6 +73,7 @@ type defsResponse struct {
 type bridge struct {
 	mu       sync.Mutex
 	catalog  map[string]*sensorState
+	sent     map[string]int64 // id -> last_seen the edge has acknowledged
 	agg      map[string]groupAgg
 	defsVer  int
 	edgeURL  string
@@ -104,6 +105,7 @@ func main() {
 	feedURL := env("FEED_MQTT_URL", "tcp://mosquitto:1883")
 	b := &bridge{
 		catalog: map[string]*sensorState{},
+		sent:    map[string]int64{},
 		agg:     map[string]groupAgg{},
 		defsVer: -1, // force a defs pull on first successful ingest
 		edgeURL:  env("EDGE_URL", ""),
@@ -189,7 +191,12 @@ func (b *bridge) snapshot() ingestRequest {
 		V:   contractVersion,
 		Agg: aggDoc{PeriodS: b.periodS, Groups: map[string]groupAgg{}},
 	}
+	// Only sensors with a reading the edge hasn't acknowledged. Re-sending unchanged sensors
+	// costs a D1 statement each and ran the account into the daily row-write cap.
 	for id, s := range b.catalog {
+		if s.LastSeen <= b.sent[id] {
+			continue
+		}
 		cp := *s
 		cp.Latest = map[string]float64{}
 		for k, v := range s.Latest {
@@ -204,7 +211,8 @@ func (b *bridge) snapshot() ingestRequest {
 }
 
 func (b *bridge) sync() error {
-	body, err := json.Marshal(b.snapshot())
+	snap := b.snapshot()
+	body, err := json.Marshal(snap)
 	if err != nil {
 		return err
 	}
@@ -212,6 +220,12 @@ func (b *bridge) sync() error {
 	if err := b.call("POST", "/api/bridge/ingest", body, &ing); err != nil {
 		return fmt.Errorf("ingest: %w", err)
 	}
+	// Marked only after a successful ingest, so a failed sync re-sends on the next one.
+	b.mu.Lock()
+	for _, c := range snap.Catalog {
+		b.sent[c.ID] = c.LastSeen
+	}
+	b.mu.Unlock()
 	if ing.DefsVersion == b.defsVer {
 		return nil
 	}

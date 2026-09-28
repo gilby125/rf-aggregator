@@ -89,17 +89,20 @@ async function bridgeIngest(request: Request, env: Env, ctx: ExecutionContext): 
   };
   if (body.v !== V) return err(400, `unsupported contract version ${body.v}`);
 
+  // The bridge re-sends every sensor it has seen since restart on each sync, most unchanged.
+  // The WHERE skips the update (and the D1 row write) unless the reading is newer.
   const stmts = (body.catalog ?? []).map((c) =>
     env.DB.prepare(
       `INSERT INTO catalog (sensor_id, source, type, last_seen, latest) VALUES (?1, ?2, ?3, ?4, ?5)
-       ON CONFLICT(sensor_id) DO UPDATE SET source = ?2, type = ?3, last_seen = ?4, latest = ?5`
+       ON CONFLICT(sensor_id) DO UPDATE SET source = ?2, type = ?3, last_seen = ?4, latest = ?5
+       WHERE ?4 > coalesce(catalog.last_seen, 0)`
     ).bind(c.id, c.source, c.type, c.last_seen, JSON.stringify(c.latest ?? {}))
   );
   if (stmts.length) await env.DB.batch(stmts);
 
   // Time-series history for the 24h charts. The bridge re-sends the same snapshot
   // every sync; UNIQUE(sensor_id, ts) + INSERT OR IGNORE dedupes to one row per
-  // actual sensor reading (keyed on last_seen). Prune beyond 48h to stay bounded.
+  // actual sensor reading (keyed on last_seen). pruneReadings() trims beyond 48h.
   const nowS = Math.floor(Date.now() / 1000);
   const reads = [];
   for (const c of body.catalog ?? []) {
@@ -114,14 +117,7 @@ async function bridgeIngest(request: Request, env: Env, ctx: ExecutionContext): 
         .bind(c.id, c.last_seen || nowS, JSON.stringify(fields))
     );
   }
-  if (reads.length) {
-    // Prune is a full index scan; at SYNC_PERIOD=15s, running it every ingest is 5760
-    // scans/day. The window must be <= one sync interval or it fires several times an hour.
-    if (nowS % 3600 < 15) {
-      reads.push(env.DB.prepare(`DELETE FROM readings WHERE ts < ?1`).bind(nowS - 48 * 3600));
-    }
-    await env.DB.batch(reads);
-  }
+  if (reads.length) await env.DB.batch(reads);
 
   if (body.aggregates) {
     const doc = {
@@ -427,7 +423,25 @@ async function handleUserApi(
   return err(404, "not found");
 }
 
+// Runs on the cron in wrangler.toml, not in ingest, so its rate does not depend on
+// SYNC_PERIOD. Each deleted row costs ~3 D1 row writes (the row plus its two indexes), and
+// the free tier caps writes per day, so delete a bounded batch per run: 100 rows every
+// 10 minutes is 14.4k rows/day (~43k writes), ahead of ~4k new rows/day with room to spare.
+const PRUNE_BATCH = 100;
+
+async function pruneReadings(env: Env) {
+  const cutoff = Math.floor(Date.now() / 1000) - 48 * 3600;
+  await env.DB.prepare(
+    `DELETE FROM readings WHERE rowid IN
+       (SELECT rowid FROM readings WHERE ts < ?1 ORDER BY ts LIMIT ?2)`
+  ).bind(cutoff, PRUNE_BATCH).run();
+}
+
 export default {
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext) {
+    ctx.waitUntil(pruneReadings(env));
+  },
+
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
     const path = url.pathname;

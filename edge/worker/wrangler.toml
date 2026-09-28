@@ -17,6 +17,10 @@ workers_dev = true
 directory = "./public"
 binding = "ASSETS"
 
+# pruneReadings() in src/index.ts — batch size there is sized to this interval.
+[triggers]
+crons = ["*/10 * * * *"]
+
 [[d1_databases]]
 binding = "DB"
 database_name = "rf_aggregator"
